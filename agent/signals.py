@@ -38,8 +38,44 @@ def indicators(px: pd.DataFrame, mom_lookback: int = 63) -> pd.DataFrame:
     return df
 
 
+def _pt_change(row) -> float | None:
+    cur, prior = row.get("pt_current"), row.get("pt_prior")
+    try:
+        cur, prior = float(cur), float(prior)
+    except (TypeError, ValueError):
+        return None
+    if not (cur > 0 and prior > 0):
+        return None
+    return cur / prior - 1
+
+
+def event_score_v2(row, pt_min_change: float = 0.10) -> int:
+    """v2：只认"真动作"。
+
+    - 评级上调 +2 / 下调 −2；首次覆盖看多 +1 / 看空 −1
+    - 目标价变动幅度 ≥ pt_min_change 才计分（±1）；幅度未知的"上调目标价"不计分
+    - 单纯重申评级、目标价小幅微调视为噪音，0 分
+    """
+    s = 0
+    action = str(row.get("action") or "").lower()
+    to_grade = str(row.get("to_grade") or "").strip().lower()
+    if action == "up":
+        s += 2
+    elif action == "down":
+        s -= 2
+    elif action == "init":
+        s += 1 if to_grade in BULLISH_GRADES else -1 if to_grade in BEARISH_GRADES else 0
+    chg = _pt_change(row)
+    if chg is not None:
+        if chg >= pt_min_change:
+            s += 1
+        elif chg <= -pt_min_change:
+            s -= 1
+    return s
+
+
 def event_score(row: pd.Series) -> int:
-    """单条分析师事件的分数。"""
+    """v1：单条分析师事件的分数（目标价任何上调都计分）。"""
     s = 0
     action = str(row.get("action") or "").lower()
     to_grade = str(row.get("to_grade") or "").strip().lower()
@@ -61,7 +97,16 @@ def event_score(row: pd.Series) -> int:
     return s
 
 
-def daily_analyst_score(events: pd.DataFrame, trading_days: pd.DatetimeIndex) -> pd.Series:
+def score_events(events: pd.DataFrame, scoring: str = "v1", pt_min_change: float = 0.10) -> pd.Series:
+    if events is None or events.empty:
+        return pd.Series(dtype=float)
+    if scoring == "v2":
+        return events.apply(lambda r: event_score_v2(r, pt_min_change), axis=1)
+    return events.apply(event_score, axis=1)
+
+
+def daily_analyst_score(events: pd.DataFrame, trading_days: pd.DatetimeIndex,
+                        scoring: str = "v1", pt_min_change: float = 0.10) -> pd.Series:
     """把事件映射到交易日（视为该日收盘后已知），按日求和。
 
     周末/节假日发布的事件归到下一个交易日。
@@ -69,7 +114,7 @@ def daily_analyst_score(events: pd.DataFrame, trading_days: pd.DatetimeIndex) ->
     out = pd.Series(0.0, index=trading_days)
     if events is None or events.empty:
         return out
-    scores = events.apply(event_score, axis=1)
+    scores = score_events(events, scoring, pt_min_change)
     dates = pd.to_datetime(events.index).normalize()
     pos = trading_days.searchsorted(dates, side="left")
     valid = pos < len(trading_days)
@@ -85,15 +130,22 @@ def market_ok(bench: pd.DataFrame) -> pd.Series:
 
 
 def build_features(prices: dict[str, pd.DataFrame], events: dict[str, pd.DataFrame],
-                   cfg: dict) -> dict[str, pd.DataFrame]:
+                   cfg: dict, members: pd.DataFrame | None = None) -> dict[str, pd.DataFrame]:
+    """members：[日期 × 代码] 成分股矩阵；给定时，非成分股当天不能成为候选。"""
     sc = cfg["signals"]
+    scoring, pt_min = sc.get("scoring", "v1"), sc.get("pt_min_change", 0.10)
     feats = {}
     for t, px in prices.items():
         df = indicators(px, sc["mom_lookback"])
-        daily = daily_analyst_score(events.get(t), df.index)
+        daily = daily_analyst_score(events.get(t), df.index, scoring, pt_min)
         df["analyst_score"] = daily.rolling(sc["analyst_lookback_days"], min_periods=1).sum()
         df["analyst_today"] = daily
+        if members is not None and t in members.columns:
+            df["member"] = members[t].reindex(df.index).fillna(False).astype(bool)
+        else:
+            df["member"] = members is None
         df["candidate"] = (
+            df["member"] &
             (df["analyst_score"] >= sc["min_analyst_score"])
             & (df["close"] > df["sma50"])
             & (df["sma50"] > df["sma200"])

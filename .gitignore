@@ -9,3 +9,5 @@ reports/*.csv
 !data/.gitkeep
 positions.csv
 .env
+data/ref/
+data/missing.json

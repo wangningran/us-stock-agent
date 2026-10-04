@@ -2,7 +2,7 @@
 
   python scripts/run_backtest.py                  # 真实数据（需能访问 Yahoo Finance）
   python scripts/run_backtest.py --synthetic      # 合成数据，离线验证流程
-  python scripts/run_backtest.py --split 2024-01-01   # 样本内/样本外分别统计
+  python scripts/run_backtest.py --split 2024-01-01   # 覆盖 config 中的样本外起点
 """
 import argparse
 import sys
@@ -29,18 +29,25 @@ def main():
     if args.synthetic:
         from agent.synthetic import make_universe
         prices, events, bench = make_universe()
+        members = None
         print("⚠️  合成数据，仅用于验证流程，数字没有任何意义\n")
     else:
         from agent.data import load_universe
-        prices, events, bench = load_universe(cfg)
+        prices, events, bench, members = load_universe(cfg)
 
-    feats = build_features(prices, events, cfg)
-    periods = [("全部", args.start, args.end)]
-    if args.split:
-        periods = [("样本内", args.start, args.split), ("样本外", args.split, args.end)]
+    feats = build_features(prices, events, cfg, members)
+    bt = cfg.get("backtest", {})
+    start = args.start or (None if args.synthetic else bt.get("start"))
+    split = args.split or (None if args.synthetic else bt.get("split"))
+    periods = [("全部", start, args.end)]
+    if split:
+        periods = [("样本内", start, split), ("样本外", split, args.end)]
 
     for name, s, e in periods:
         trades, equity = run_backtest(feats, bench, cfg, start=s, end=e)
+        if trades.empty:
+            print(f"===== {name}：无交易 =====\n")
+            continue
         print(f"===== {name}  {equity.index[0]:%Y-%m-%d} ~ {equity.index[-1]:%Y-%m-%d} =====")
         print(format_summary(summarize(trades, equity, bench)))
         print()

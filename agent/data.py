@@ -1,7 +1,10 @@
 """数据层：日线行情 + 分析师评级/目标价变动（免费源 yfinance），带本地 CSV 缓存。"""
 from __future__ import annotations
 
+import json
+import logging
 import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pandas as pd
@@ -78,15 +81,55 @@ def normalize_events(raw: pd.DataFrame) -> pd.DataFrame:
     return df.sort_index()
 
 
-def load_universe(cfg: dict) -> tuple[dict[str, pd.DataFrame], dict[str, pd.DataFrame], pd.DataFrame]:
-    """返回 (prices, events, benchmark)。单只股票失败时跳过并提示。"""
+def _missing_registry(cache_dir: str) -> tuple[Path, dict]:
+    path = ROOT / cache_dir / "missing.json"
+    data = json.loads(path.read_text()) if path.exists() else {}
+    week_ago = time.time() - 7 * 86400
+    return path, {t: ts for t, ts in data.items() if ts > week_ago}
+
+
+def _fetch_one(t: str, start: str, cache: str):
+    try:
+        return t, get_prices(t, start, cache), get_analyst_events(t, cache)
+    except Exception:  # noqa: BLE001 - 已退市/无数据的股票直接跳过
+        return t, None, None
+
+
+def load_universe(cfg: dict):
+    """返回 (prices, events, benchmark, members)。
+
+    universe_mode = "sp500_pit"：历史标普 500 成分股，members 为 [日期 × 代码] 的成分股矩阵；
+    universe_mode = "list"：使用 config 中的 universe 列表，members 为 None。
+    """
     start, cache = cfg["data"]["start"], cfg["data"]["cache_dir"]
+    mode = cfg.get("universe_mode", "list")
+    hist = None
+    if mode == "sp500_pit":
+        from .universe import load_sp500_history, tickers_between
+        hist = load_sp500_history()
+        tickers = tickers_between(hist, start)
+    elif mode == "sp500_current":
+        from .universe import current_members, load_sp500_history
+        tickers = current_members(load_sp500_history())
+    else:
+        tickers = list(cfg["universe"])
+
+    logging.getLogger("yfinance").setLevel(logging.CRITICAL)
+    reg_path, missing = _missing_registry(cache)
+    todo = [t for t in tickers if t not in missing]
     prices, events = {}, {}
-    for t in cfg["universe"]:
-        try:
-            prices[t] = get_prices(t, start, cache)
-            events[t] = get_analyst_events(t, cache)
-        except Exception as e:  # noqa: BLE001 - 单只失败不影响整体
-            print(f"[warn] skip {t}: {e}")
+    with ThreadPoolExecutor(max_workers=cfg["data"].get("workers", 8)) as pool:
+        for t, px, ev in pool.map(lambda t: _fetch_one(t, start, cache), todo):
+            if px is None or px.empty:
+                missing[t] = time.time()
+            else:
+                prices[t], events[t] = px, ev
+    reg_path.write_text(json.dumps(missing))
+    print(f"[data] {len(prices)}/{len(tickers)} 只股票有数据（缺失 {len(tickers) - len(prices)}，多为已退市/更名）")
+
     bench = get_prices(cfg["benchmark"], start, cache)
-    return prices, events, bench
+    members = None
+    if hist is not None:
+        from .universe import membership
+        members = membership(hist, bench.index, sorted(prices))
+    return prices, events, bench, members

@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import pandas as pd
 
-from .signals import market_ok, rank_candidates
+from .signals import market_ok
 from .strategy import OrderPlan, Position, check_exit, open_position, plan_order, try_fill, update_trailing
 
 
@@ -21,11 +21,17 @@ def run_backtest(feats: dict[str, pd.DataFrame], bench: pd.DataFrame, cfg: dict,
         days = days[days <= pd.Timestamp(end)]
     mkt = market_ok(bench)
 
+    # 预先对齐成宽表，避免每天遍历全部股票
+    tickers = list(feats)
+    close_px = pd.DataFrame({t: feats[t]["close"] for t in tickers}).reindex(days).ffill()
+    cand = pd.DataFrame({t: feats[t]["candidate"] for t in tickers}).reindex(days).fillna(False).astype(bool)
+    score = pd.DataFrame({t: feats[t]["analyst_score"] for t in tickers}).reindex(days)
+    mom = pd.DataFrame({t: feats[t]["mom"] for t in tickers}).reindex(days)
+
     cash = float(rc["initial_equity"])
     positions: dict[str, Position] = {}
     pending: list[OrderPlan] = []
     trades, equity_curve = [], {}
-    last_close: dict[str, float] = {}
 
     def close_pos(pos: Position, price: float, day, reason: str):
         nonlocal cash
@@ -83,29 +89,33 @@ def run_backtest(feats: dict[str, pd.DataFrame], bench: pd.DataFrame, cfg: dict,
                 update_trailing(pos, bar, cfg)
 
         # 3) 收盘估值
-        for t, df in feats.items():
-            if day in df.index:
-                last_close[t] = float(df.at[day, "close"])
-        equity = cash + sum(p.shares * last_close.get(t, p.entry) for t, p in positions.items())
+        closes = close_px.loc[day]
+        equity = cash + sum(p.shares * (closes[t] if pd.notna(closes[t]) else p.entry)
+                            for t, p in positions.items())
         equity_curve[day] = equity
 
         # 4) 生成明日挂单
         if use_mkt and not bool(mkt.get(day, False)):
             continue
         slots = rc["max_positions"] - len(positions)
-        for t, row in rank_candidates(feats, day):
+        if slots <= 0:
+            continue
+        today = cand.columns[cand.loc[day].values]
+        ranked = sorted(today, key=lambda t: (score.at[day, t], mom.at[day, t]), reverse=True)
+        for t in ranked:
             if slots <= 0:
                 break
             if t in positions:
                 continue
-            plan = plan_order(t, day, row, equity, cfg)
+            plan = plan_order(t, day, feats[t].loc[day], equity, cfg)
             if plan:
                 pending.append(plan)
                 slots -= 1
 
     # 回测结束时按最后收盘价平掉剩余持仓
     if len(days):
+        last = close_px.iloc[-1]
         for t, pos in list(positions.items()):
-            close_pos(pos, last_close.get(t, pos.entry), days[-1], "end")
+            close_pos(pos, last[t] if pd.notna(last[t]) else pos.entry, days[-1], "end")
 
     return pd.DataFrame(trades), pd.Series(equity_curve, name="equity")

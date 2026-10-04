@@ -8,7 +8,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from agent.backtest import run_backtest  # noqa: E402
 from agent.config import load_config  # noqa: E402
-from agent.signals import build_features, daily_analyst_score, event_score  # noqa: E402
+from agent.signals import build_features, daily_analyst_score, event_score, event_score_v2  # noqa: E402
+from agent.universe import membership, tickers_between  # noqa: E402
 from agent.strategy import OrderPlan, Position, check_exit, try_fill  # noqa: E402
 from agent.synthetic import make_universe  # noqa: E402
 
@@ -85,6 +86,35 @@ def test_future_events_do_not_change_past_signals():
     part = build_features(trunc_px, trunc_ev, CFG)
     for t in prices:
         pd.testing.assert_series_equal(full[t]["candidate"][:cut], part[t]["candidate"], check_names=False)
+
+
+def test_event_scoring_v2_ignores_small_pt_moves():
+    assert event_score_v2({"action": "main", "pt_action": "Raises", "pt_current": 105, "pt_prior": 100}) == 0
+    assert event_score_v2({"action": "main", "pt_current": 115, "pt_prior": 100}) == 1
+    assert event_score_v2({"action": "reit", "pt_action": "Raises"}) == 0  # 幅度未知不计分
+    assert event_score_v2({"action": "up", "pt_current": 130, "pt_prior": 100}) == 3
+    assert event_score_v2({"action": "down", "pt_current": 80, "pt_prior": 100}) == -3
+
+
+def _hist():
+    return pd.DataFrame({"date": pd.to_datetime(["2020-01-01", "2020-06-01"]),
+                         "tickers": [["AAA", "BBB"], ["AAA", "CCC"]]})
+
+
+def test_membership_point_in_time():
+    days = pd.to_datetime(["2019-12-31", "2020-03-02", "2020-06-01", "2020-07-01"])
+    m = membership(_hist(), pd.DatetimeIndex(days), ["AAA", "BBB", "CCC"])
+    assert not m.iloc[0].any()                       # 第一次快照之前
+    assert m.loc["2020-03-02"].tolist() == [True, True, False]
+    assert m.loc["2020-06-01"].tolist() == [True, False, True]
+    assert tickers_between(_hist(), "2020-03-01") == ["AAA", "BBB", "CCC"]
+
+
+def test_non_members_never_candidates():
+    prices, events, bench = make_universe(n_tickers=3, n_days=700)
+    members = pd.DataFrame(False, index=bench.index, columns=list(prices))
+    feats = build_features(prices, events, CFG, members)
+    assert not any(f["candidate"].any() for f in feats.values())
 
 
 if __name__ == "__main__":

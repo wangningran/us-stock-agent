@@ -26,11 +26,12 @@ def main():
     if args.synthetic:
         from agent.synthetic import make_universe
         prices, events, bench = make_universe()
+        members = None
     else:
         from agent.data import load_universe
-        prices, events, bench = load_universe(cfg)
+        prices, events, bench, members = load_universe(cfg)
 
-    feats = build_features(prices, events, cfg)
+    feats = build_features(prices, events, cfg, members)
     report = build_report(feats, events, bench, cfg, load_positions(args.positions),
                           equity=args.equity or cfg["risk"]["initial_equity"],
                           check_earnings=not args.synthetic)

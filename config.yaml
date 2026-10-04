@@ -1,5 +1,10 @@
 # ---- 股票池 ----
-# 流动性好的美股大中盘。注意：用"今天"的名单回测存在幸存者偏差，结果会偏乐观。
+# sp500_pit     : 历史标普 500 成分股，每天只交易当时的成分股（推荐，减少幸存者偏差）
+# sp500_current : 今天的标普 500 成分股（有幸存者偏差，仅用于对比）
+# list          : 使用下面的 universe 列表
+universe_mode: sp500_pit
+
+# universe_mode = list 时使用。注意：手挑今天的名单回测会严重偏乐观。
 universe:
   - AAPL
   - MSFT
@@ -51,11 +56,18 @@ universe:
 benchmark: SPY
 
 data:
-  start: "2019-01-01"
+  start: "2018-01-01"          # 多取一年用于计算 200 日线
   cache_dir: data
+  workers: 8
+
+backtest:
+  start: "2019-01-01"
+  split: "2024-01-01"          # 样本外起点
 
 # ---- 信号 ----
 signals:
+  scoring: v2                   # v1: 任何目标价上调都计分；v2: 只认评级变动和 ≥10% 的目标价调整
+  pt_min_change: 0.10
   analyst_lookback_days: 5      # 统计最近 N 个交易日的分析师事件
   min_analyst_score: 2          # 分析师分数 >= 该值才考虑
   rsi_max: 75                   # 超买过滤

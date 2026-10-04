@@ -1,0 +1,80 @@
+# ---- 股票池 ----
+# 流动性好的美股大中盘。注意：用"今天"的名单回测存在幸存者偏差，结果会偏乐观。
+universe:
+  - AAPL
+  - MSFT
+  - NVDA
+  - AMZN
+  - GOOGL
+  - META
+  - AVGO
+  - TSLA
+  - AMD
+  - NFLX
+  - CRM
+  - ORCL
+  - ADBE
+  - QCOM
+  - TXN
+  - INTU
+  - AMAT
+  - MU
+  - LRCX
+  - KLAC
+  - PANW
+  - CRWD
+  - NOW
+  - UBER
+  - SHOP
+  - JPM
+  - GS
+  - MS
+  - V
+  - MA
+  - LLY
+  - UNH
+  - ABBV
+  - MRK
+  - ISRG
+  - COST
+  - WMT
+  - HD
+  - MCD
+  - NKE
+  - CAT
+  - DE
+  - GE
+  - BA
+  - XOM
+  - CVX
+
+benchmark: SPY
+
+data:
+  start: "2019-01-01"
+  cache_dir: data
+
+# ---- 信号 ----
+signals:
+  analyst_lookback_days: 5      # 统计最近 N 个交易日的分析师事件
+  min_analyst_score: 2          # 分析师分数 >= 该值才考虑
+  rsi_max: 75                   # 超买过滤
+  mom_lookback: 63              # 约 3 个月动量
+  market_filter: true           # 基准在 200 日线下方时不开新仓
+
+# ---- 入场 / 出场 ----
+trade:
+  entry_atr_mult: 0.25          # 限价 = 前收盘 - 0.25 * ATR（等小回调，不追高）
+  stop_atr_mult: 2.0            # 止损 = 成交价 - 2 * ATR
+  target_atr_mult: 3.0          # 止盈 = 成交价 + 3 * ATR
+  max_hold_days: 15             # 时间止损
+  breakeven_at_r: 1.0           # 浮盈达到 1R 后止损移到成本价
+
+# ---- 仓位 / 风控 ----
+risk:
+  initial_equity: 100000
+  risk_per_trade: 0.01          # 每笔最多亏账户的 1%
+  max_position_pct: 0.10        # 单票最多 10% 仓位
+  max_positions: 8
+  slippage_bps: 5               # 单边滑点
+  commission_per_order: 1.0     # 单笔佣金（美元），按你 moomoo 实际费率修改

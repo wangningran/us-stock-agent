@@ -1,0 +1,10 @@
+__pycache__/
+*.pyc
+.venv/
+data/*.csv
+data/*.parquet
+reports/*.md
+!reports/.gitkeep
+!data/.gitkeep
+positions.csv
+.env

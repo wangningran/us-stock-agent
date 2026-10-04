@@ -4,6 +4,7 @@ __pycache__/
 data/*.csv
 data/*.parquet
 reports/*.md
+reports/*.csv
 !reports/.gitkeep
 !data/.gitkeep
 positions.csv

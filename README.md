@@ -46,6 +46,18 @@ sell-offs and bear markets (e.g. 2022: +3% vs SPY −18%) and lags SPY in strong
 Sample reports: [`docs/sample_report_buy.md`](docs/sample_report_buy.md),
 [`docs/sample_report_sell.md`](docs/sample_report_sell.md).
 
+## Market recap reports
+
+`scripts/market_recap.py` produces two Chinese reports each trading day, saved to `reports/market/`:
+
+- `close` (13:08 PT): indices and macro, breadth (advancers / decliners, 52-week highs / lows, % above 200-day),
+  sectors with their largest names and best / worst members, S&P 500 movers of 4% or more, the RSI(2) watch-list
+  and next-day earnings.
+- `after` (17:08 PT): after-hours moves of index and sector ETFs, top-300 stocks moving 2% or more after hours,
+  and companies reporting earnings that day.
+
+Sector and company names come from `agent/sectors.json` (built from yfinance).
+
 ## Usage
 
 ```bash
@@ -63,6 +75,9 @@ python scripts/record_trade.py nobuy MA          # recommended but not bought
 python scripts/record_trade.py sell MA 2 540.00  # confirm a sell
 python scripts/record_trade.py nosell MA         # recommended sell not executed
 python scripts/record_trade.py show              # positions and cash
+
+python scripts/market_recap.py close   # market recap after the regular close
+python scripts/market_recap.py after   # after-hours recap
 
 # research
 python scripts/compare_meanrev.py                # RSI(2) / cumulative RSI(2) / IBS / EMA6-12 comparison

@@ -194,3 +194,66 @@ def mr_summary(tr: pd.DataFrame, eq: pd.Series) -> dict:
         mdd=(eq / eq.cummax() - 1).min(), sharpe=r.mean() / r.std() * np.sqrt(252) if r.std() else np.nan,
         worst=tr.ret.min(),
     )
+
+
+# ---------------- 扩展指标：用于在 RSI(2) 上叠加过滤 ----------------
+
+def ext_features(px: pd.DataFrame) -> pd.DataFrame:
+    """在 mr_features 基础上加 MACD / 布林带 / ADX / 成交量 / 跳空 / 波动率等。"""
+    d = mr_features(px)
+    c, h, l = d["close"], d["high"], d["low"]
+    d["sma20"] = c.rolling(20).mean()
+    d["sma50"] = c.rolling(50).mean()
+    sd20 = c.rolling(20).std()
+    d["bb_lower"] = d["sma20"] - 2 * sd20
+    d["bb_pctb"] = (c - d["bb_lower"]) / (4 * sd20)          # 布林 %B，<0 表示跌破下轨
+    ema12, ema26 = c.ewm(span=12, adjust=False).mean(), c.ewm(span=26, adjust=False).mean()
+    d["macd"] = ema12 - ema26
+    d["macd_sig"] = d["macd"].ewm(span=9, adjust=False).mean()
+    d["macd_hist"] = d["macd"] - d["macd_sig"]
+    prev_c = c.shift(1)
+    tr = pd.concat([h - l, (h - prev_c).abs(), (l - prev_c).abs()], axis=1).max(axis=1)
+    d["atr"] = tr.ewm(alpha=1 / 14, adjust=False, min_periods=14).mean()
+    d["atr_pct"] = d["atr"] / c
+    up, dn = h.diff(), -l.diff()
+    pdm = pd.Series(np.where((up > dn) & (up > 0), up, 0.0), index=d.index)
+    ndm = pd.Series(np.where((dn > up) & (dn > 0), dn, 0.0), index=d.index)
+    atr_w = tr.ewm(alpha=1 / 14, adjust=False, min_periods=14).mean()
+    pdi = 100 * pdm.ewm(alpha=1 / 14, adjust=False).mean() / atr_w
+    ndi = 100 * ndm.ewm(alpha=1 / 14, adjust=False).mean() / atr_w
+    dx = 100 * (pdi - ndi).abs() / (pdi + ndi).replace(0, np.nan)
+    d["adx"] = dx.ewm(alpha=1 / 14, adjust=False).mean()
+    d["vol_ratio"] = d["volume"] / d["volume"].rolling(20).mean()
+    d["gap"] = d["open"] / prev_c - 1
+    d["ret1"] = c / prev_c - 1
+    d["dd10"] = c / h.rolling(10).max() - 1                     # 距 10 日高点回撤
+    low14, high14 = l.rolling(14).min(), h.rolling(14).max()
+    d["stoch_k"] = 100 * (c - low14) / (high14 - low14).replace(0, np.nan)
+    d["down_days"] = (c < prev_c).astype(int).groupby((c >= prev_c).cumsum()).cumsum()
+    return d
+
+
+def market_context(bench: pd.DataFrame, vix: pd.DataFrame | None) -> pd.DataFrame:
+    c = bench["close"]
+    m = pd.DataFrame(index=bench.index)
+    m["spy_above200"] = c > c.rolling(200).mean()
+    m["spy_above50"] = c > c.rolling(50).mean()
+    m["spy_rsi2"] = wilder_rsi(c, 2)
+    m["vix"] = vix["close"].reindex(bench.index).ffill() if vix is not None else np.nan
+    return m
+
+
+def build_custom(base: dict[str, pd.DataFrame], mkt: pd.DataFrame, entry, exit_, rank,
+                 members: pd.DataFrame | None = None) -> dict[str, pd.DataFrame]:
+    """base：已算好 ext_features 的字典；entry/exit_/rank 接收 (d, mkt) 返回 Series。"""
+    out = {}
+    for t, d0 in base.items():
+        d = d0.copy()
+        m = mkt.reindex(d.index)
+        member = members[t].reindex(d.index).fillna(False).astype(bool) if members is not None and t in members \
+            else pd.Series(members is None, index=d.index)
+        d["entry"] = (entry(d, m) & member & d.sma200.notna()).fillna(False).astype(bool)
+        d["exit"] = exit_(d, m).fillna(False).astype(bool)
+        d["rank"] = rank(d, m)
+        out[t] = d
+    return out

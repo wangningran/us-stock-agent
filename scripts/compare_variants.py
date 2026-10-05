@@ -1,7 +1,7 @@
-"""参数对照：比较不同股票池 / 打分 / 出场规则，分样本内、样本外输出。
+"""Compare universes / analyst scoring / exit rules for the legacy v1 strategy, in-sample vs out-of-sample.
 
   python scripts/compare_variants.py
-  python scripts/compare_variants.py --only 历史成分股
+  python scripts/compare_variants.py --only PIT
 """
 import argparse
 import copy
@@ -17,15 +17,15 @@ from agent.metrics import summarize  # noqa: E402
 from agent.signals import build_features  # noqa: E402
 
 PIT = {"universe_mode": "sp500_pit"}
-# 名称 -> {"key" 或 "section.key": value}
+# name -> {"key" or "section.key": value}
 VARIANTS = {
-    "手挑46只 v1打分（旧版）": {"universe_mode": "list", "signals.scoring": "v1"},
-    "今日成分股 v2打分": {"universe_mode": "sp500_current"},
-    "历史成分股 纯动量": {**PIT, "signals.min_analyst_score": -99},
-    "历史成分股 v1打分": {**PIT, "signals.scoring": "v1"},
-    "历史成分股 v2打分": {**PIT},
-    "历史成分股 v2 门槛3": {**PIT, "signals.min_analyst_score": 3},
-    "历史成分股 v2 高胜率1/3": {**PIT, "trade.target_atr_mult": 1.0, "trade.stop_atr_mult": 3.0,
+    "hand-picked 46, v1 scoring": {"universe_mode": "list", "signals.scoring": "v1"},
+    "current S&P 500, v2": {"universe_mode": "sp500_current"},
+    "PIT S&P 500, momentum only": {**PIT, "signals.min_analyst_score": -99},
+    "PIT S&P 500, v1 scoring": {**PIT, "signals.scoring": "v1"},
+    "PIT S&P 500, v2 scoring": {**PIT},
+    "PIT S&P 500, v2 score>=3": {**PIT, "signals.min_analyst_score": 3},
+    "PIT S&P 500, v2 TP1/SL3": {**PIT, "trade.target_atr_mult": 1.0, "trade.stop_atr_mult": 3.0,
                           "trade.breakeven_at_r": 0},
 }
 
@@ -44,14 +44,14 @@ def apply(cfg: dict, overrides: dict) -> dict:
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--config")
-    ap.add_argument("--only", help="只跑名称包含该字符串的规则")
+    ap.add_argument("--only", help="only run variants whose name contains this string")
     args = ap.parse_args()
 
     base = load_config(args.config)
     start, split = base["backtest"]["start"], base["backtest"]["split"]
     data_cache: dict[str, tuple] = {}
-    print(f"{'规则':<24}{'段':<3}{'笔数':>5}{'胜率':>7}{'盈亏比':>7}{'期望R':>8}{'利润因子':>7}"
-          f"{'年化':>8}{'回撤':>8}{'夏普':>6}")
+    print(f"{'variant':<30}{'seg':<5}{'trades':>7}{'win':>7}{'payoff':>7}{'E[R]':>8}{'PF':>7}"
+          f"{'CAGR':>8}{'MDD':>8}{'Sharpe':>7}")
     for name, ov in VARIANTS.items():
         if args.only and args.only not in name:
             continue
@@ -61,20 +61,20 @@ def main():
             data_cache[mode] = load_universe(cfg)
         prices, events, bench, members = data_cache[mode]
         feats = build_features(prices, events, cfg, members)
-        for seg, s, e in [("内", start, split), ("外", split, None)]:
+        for seg, s, e in [("IS", start, split), ("OOS", split, None)]:
             trades, equity = run_backtest(feats, bench, cfg, start=s, end=e)
             m = summarize(trades, equity, bench)
             if not m["trades"]:
-                print(f"{name:<24}{seg:<3}  无交易")
+                print(f"{name:<30}{seg:<5}  no trades")
                 continue
-            print(f"{name:<24}{seg:<3}{m['trades']:>5}{m['win_rate']:>7.1%}{m['payoff_ratio']:>7.2f}"
+            print(f"{name:<30}{seg:<5}{m['trades']:>7}{m['win_rate']:>7.1%}{m['payoff_ratio']:>7.2f}"
                   f"{m['expectancy_r']:>+8.3f}{m['profit_factor']:>7.2f}{m['cagr']:>+8.1%}"
-                  f"{m['max_drawdown']:>8.1%}{m['sharpe']:>6.2f}", flush=True)
+                  f"{m['max_drawdown']:>8.1%}{m['sharpe']:>7.2f}", flush=True)
     b = data_cache[next(iter(data_cache))][2]["close"]
-    for seg, s, e in [("内", start, split), ("外", split, None)]:
+    for seg, s, e in [("IS", start, split), ("OOS", split, None)]:
         x = b[(b.index >= s) & ((b.index < e) if e else True)]
         yrs = (x.index[-1] - x.index[0]).days / 365.25
-        print(f"{'SPY 买入持有':<24}{seg:<3}{'':>5}{'':>7}{'':>7}{'':>8}{'':>7}"
+        print(f"{'SPY buy & hold':<30}{seg:<5}{'':>7}{'':>7}{'':>7}{'':>8}{'':>7}"
               f"{(x.iloc[-1] / x.iloc[0]) ** (1 / yrs) - 1:>+8.1%}{(x / x.cummax() - 1).min():>8.1%}")
 
 

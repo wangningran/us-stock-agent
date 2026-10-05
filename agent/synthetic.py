@@ -1,4 +1,4 @@
-"""合成数据：离线跑通流程 / 单元测试用，不代表任何真实行情。"""
+"""Synthetic data for offline runs and unit tests; not real market data."""
 from __future__ import annotations
 
 import numpy as np

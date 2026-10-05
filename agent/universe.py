@@ -1,7 +1,7 @@
-"""历史成分股（point-in-time）：每个交易日只允许交易当天确实在标普 500 里的股票。
+"""Point-in-time S&P 500 membership: each day only stocks that were index members that day are tradable.
 
-数据来源：github.com/fja05680/sp500（基于 Andreas Clenow《Trading Evolved》的成分股历史，持续更新）。
-局限：Yahoo 不提供已退市/已更名股票的行情，这部分股票在回测中缺失，覆盖率见 coverage()。
+Source: github.com/fja05680/sp500 (membership history from Andreas Clenow's "Trading Evolved", kept up to date).
+Limitation: Yahoo has no prices for delisted / renamed tickers, so those are missing from backtests.
 """
 from __future__ import annotations
 
@@ -20,7 +20,7 @@ def to_yahoo(ticker: str) -> str:
 
 
 def load_sp500_history(path: str | Path | None = None) -> pd.DataFrame:
-    """返回 [date, tickers(list)]，每行是该日起生效的成分股快照。"""
+    """Return [date, tickers(list)]; each row is the membership snapshot effective from that date."""
     path = Path(path) if path else ROOT / "data" / "ref" / "sp500_hist.csv"
     if not path.exists():
         import urllib.request
@@ -32,7 +32,7 @@ def load_sp500_history(path: str | Path | None = None) -> pd.DataFrame:
 
 
 def tickers_between(hist: pd.DataFrame, start: str, end: str | None = None) -> list[str]:
-    """[start, end] 期间曾经是成分股的全部代码（含区间开始前最后一次快照）。"""
+    """All tickers that were members during [start, end] (including the last snapshot before start)."""
     start = pd.Timestamp(start)
     first = hist.index[hist.date <= start]
     lo = first[-1] if len(first) else 0
@@ -46,7 +46,7 @@ def tickers_between(hist: pd.DataFrame, start: str, end: str | None = None) -> l
 
 
 def membership(hist: pd.DataFrame, days: pd.DatetimeIndex, tickers: list[str]) -> pd.DataFrame:
-    """bool 矩阵 [days × tickers]：当天是否为成分股。快照向前填充到下一次变动。"""
+    """Boolean [days x tickers] matrix of membership; each snapshot is forward-filled until the next change."""
     snap_idx = hist.date.searchsorted(days, side="right") - 1
     cols = {t: i for i, t in enumerate(tickers)}
     import numpy as np

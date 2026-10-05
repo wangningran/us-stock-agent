@@ -1,6 +1,6 @@
-"""信号层：技术指标 + 分析师事件打分 + 候选筛选。
+"""Signal layer (legacy v1 analyst strategy): technical indicators, analyst event scoring and candidate filters.
 
-所有信号在第 t 日收盘后计算，只用 t 日及以前的数据；交易在 t+1 日执行。
+All signals are computed after day t's close using data up to day t only; trades execute on day t+1.
 """
 from __future__ import annotations
 
@@ -50,11 +50,11 @@ def _pt_change(row) -> float | None:
 
 
 def event_score_v2(row, pt_min_change: float = 0.10) -> int:
-    """v2：只认"真动作"。
+    """v2: count only meaningful actions.
 
-    - 评级上调 +2 / 下调 −2；首次覆盖看多 +1 / 看空 −1
-    - 目标价变动幅度 ≥ pt_min_change 才计分（±1）；幅度未知的"上调目标价"不计分
-    - 单纯重申评级、目标价小幅微调视为噪音，0 分
+    - Upgrade +2 / downgrade -2; bullish initiation +1 / bearish initiation -1
+    - Price-target moves count (+/-1) only when |change| >= pt_min_change; "raises" of unknown size score 0
+    - Plain reiterations and small target tweaks are treated as noise (0)
     """
     s = 0
     action = str(row.get("action") or "").lower()
@@ -75,7 +75,7 @@ def event_score_v2(row, pt_min_change: float = 0.10) -> int:
 
 
 def event_score(row: pd.Series) -> int:
-    """v1：单条分析师事件的分数（目标价任何上调都计分）。"""
+    """v1: score of one analyst event (any price-target raise counts)."""
     s = 0
     action = str(row.get("action") or "").lower()
     to_grade = str(row.get("to_grade") or "").strip().lower()
@@ -107,9 +107,9 @@ def score_events(events: pd.DataFrame, scoring: str = "v1", pt_min_change: float
 
 def daily_analyst_score(events: pd.DataFrame, trading_days: pd.DatetimeIndex,
                         scoring: str = "v1", pt_min_change: float = 0.10) -> pd.Series:
-    """把事件映射到交易日（视为该日收盘后已知），按日求和。
+    """Map events to trading days (treated as known after that day's close) and sum per day.
 
-    周末/节假日发布的事件归到下一个交易日。
+    Events published on weekends / holidays are assigned to the next trading day.
     """
     out = pd.Series(0.0, index=trading_days)
     if events is None or events.empty:
@@ -124,14 +124,14 @@ def daily_analyst_score(events: pd.DataFrame, trading_days: pd.DatetimeIndex,
 
 
 def market_ok(bench: pd.DataFrame) -> pd.Series:
-    """大盘过滤：基准收盘价在 200 日线上方。"""
+    """Market filter: benchmark close above its 200-day SMA."""
     c = bench["close"]
     return c > c.rolling(200).mean()
 
 
 def build_features(prices: dict[str, pd.DataFrame], events: dict[str, pd.DataFrame],
                    cfg: dict, members: pd.DataFrame | None = None) -> dict[str, pd.DataFrame]:
-    """members：[日期 × 代码] 成分股矩阵；给定时，非成分股当天不能成为候选。"""
+    """members: [date x ticker] membership matrix; when given, non-members cannot be candidates that day."""
     sc = cfg["signals"]
     scoring, pt_min = sc.get("scoring", "v1"), sc.get("pt_min_change", 0.10)
     feats = {}
@@ -158,7 +158,7 @@ def build_features(prices: dict[str, pd.DataFrame], events: dict[str, pd.DataFra
 
 
 def rank_candidates(feats: dict[str, pd.DataFrame], day: pd.Timestamp) -> list[tuple[str, pd.Series]]:
-    """返回某日的候选，按分析师分数、动量降序。"""
+    """Candidates on a given day, sorted by analyst score then momentum (descending)."""
     rows = []
     for t, df in feats.items():
         if day in df.index and bool(df.at[day, "candidate"]):

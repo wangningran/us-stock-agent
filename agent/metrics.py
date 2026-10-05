@@ -38,22 +38,22 @@ def summarize(trades: pd.DataFrame, equity: pd.Series, bench: pd.DataFrame | Non
 
 def format_summary(s: dict) -> str:
     pct = lambda x: f"{x * 100:.1f}%"  # noqa: E731
-    lines = [f"交易笔数        {s['trades']}"]
+    lines = [f"Trades           {s['trades']}"]
     if s["trades"]:
         lines += [
-            f"胜率            {pct(s['win_rate'])}",
-            f"平均盈利/亏损    {pct(s['avg_win_pct'])} / {pct(s['avg_loss_pct'])}",
-            f"盈亏比          {s['payoff_ratio']:.2f}",
-            f"期望值(每笔R)    {s['expectancy_r']:.3f}",
-            f"利润因子        {s['profit_factor']:.2f}",
-            f"平均持有天数     {s['avg_days']:.1f}",
-            f"出场原因        {s['exit_reasons']}",
+            f"Win rate         {pct(s['win_rate'])}",
+            f"Avg win / loss   {pct(s['avg_win_pct'])} / {pct(s['avg_loss_pct'])}",
+            f"Payoff ratio     {s['payoff_ratio']:.2f}",
+            f"Expectancy (R)   {s['expectancy_r']:.3f}",
+            f"Profit factor    {s['profit_factor']:.2f}",
+            f"Avg days held    {s['avg_days']:.1f}",
+            f"Exit reasons     {s['exit_reasons']}",
         ]
     if "total_return" in s:
         lines += [
-            f"总收益          {pct(s['total_return'])}   (基准 {pct(s.get('bench_total_return', float('nan')))})",
-            f"年化收益        {pct(s['cagr'])}",
-            f"最大回撤        {pct(s['max_drawdown'])}   (基准 {pct(s.get('bench_max_drawdown', float('nan')))})",
-            f"夏普比率        {s['sharpe']:.2f}",
+            f"Total return     {pct(s['total_return'])}   (benchmark {pct(s.get('bench_total_return', float('nan')))})",
+            f"CAGR             {pct(s['cagr'])}",
+            f"Max drawdown     {pct(s['max_drawdown'])}   (benchmark {pct(s.get('bench_max_drawdown', float('nan')))})",
+            f"Sharpe           {s['sharpe']:.2f}",
         ]
     return "\n".join(lines)

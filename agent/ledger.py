@@ -1,7 +1,7 @@
-"""买卖记录：按用户实际成交更新模型账户。
+"""Trade ledger: update the model account with the user's actual fills.
 
-报告推荐的买卖先记为"未确认"（按收盘价假设成交）；用户告知实际成交后，用这里的函数改成"已确认"，
-之后的卖出建议、止损价、盈亏统计都基于实际记录。
+Recommended trades are first recorded as unconfirmed (assumed filled at the close). Once the user reports the
+actual fill, these functions mark it confirmed, and later exit advice, stops and P&L use the real numbers.
 """
 from __future__ import annotations
 
@@ -18,9 +18,10 @@ def _row(df: pd.DataFrame, ticker: str) -> int | None:
 
 
 def confirm_buy(acct, pos, ticker, shares, price, date=None):
-    """确认买入（或记录一笔报告外的买入）。已有同名未确认持仓则改成实际股数和价格。"""
+    """Confirm a buy (or record one the report did not suggest). An unconfirmed lot of the same ticker is updated."""
     date = pd.Timestamp(date) if date else _today()
-    i = _row(pos, ticker)
+    unconfirmed = pos.index[(pos.ticker == ticker) & ~pos.confirmed.astype(bool)]
+    i = unconfirmed[-1] if len(unconfirmed) else None   # confirmed lots are never overwritten; a new lot is added
     stop = round(price * (1 - acct["stop_pct"]), 2)
     if i is not None:
         r = pos.loc[i]
@@ -36,24 +37,24 @@ def confirm_buy(acct, pos, ticker, shares, price, date=None):
 
 
 def cancel_buy(acct, pos, ticker):
-    """报告推荐了但实际没买。"""
+    """The report recommended a buy but the user did not buy."""
     i = _row(pos, ticker)
     if i is None:
-        raise ValueError(f"持仓中没有 {ticker}")
+        raise ValueError(f"no position in {ticker}")
     r = pos.loc[i]
     acct["cash"] += r.entry * r.shares
     return acct, pos.drop(index=i).reset_index(drop=True)
 
 
 def confirm_sell(acct, pos, trades, ticker, shares, price, date=None):
-    """确认卖出。优先匹配报告记下的未确认卖出；否则从持仓中卖出（支持部分卖出）。"""
+    """Confirm a sell. Matches a pending (unconfirmed) report sell first, else sells from holdings (partial ok)."""
     date = pd.Timestamp(date) if date else _today()
     pending = trades.index[(trades.ticker == ticker) & ~trades.confirmed.astype(bool)]
     if len(pending):
         j = pending[-1]
         t = trades.loc[j]
         acct["cash"] += price * shares - t.exit * t.shares
-        if shares < t.shares:  # 只卖了一部分：剩余放回持仓
+        if shares < t.shares:  # partial sell: the remainder goes back to holdings
             pos = pd.concat([pos, pd.DataFrame([{
                 "ticker": ticker, "entry_date": t.entry_date, "entry": t.entry, "shares": t.shares - shares,
                 "stop": round(t.entry * (1 - acct["stop_pct"]), 2), "provisional": False, "confirmed": True}])],
@@ -64,10 +65,10 @@ def confirm_sell(acct, pos, trades, ticker, shares, price, date=None):
         return acct, pos, trades
     i = _row(pos, ticker)
     if i is None:
-        raise ValueError(f"持仓和待确认卖出中都没有 {ticker}")
+        raise ValueError(f"{ticker} is neither held nor pending sale")
     r = pos.loc[i]
     if shares > r.shares:
-        raise ValueError(f"{ticker} 只持有 {r.shares} 股")
+        raise ValueError(f"only {r.shares} shares of {ticker} held")
     acct["cash"] += price * shares
     trades = pd.concat([trades, pd.DataFrame([{
         "ticker": ticker, "entry_date": r.entry_date, "entry": r.entry, "exit_date": date, "exit": price,
@@ -81,10 +82,10 @@ def confirm_sell(acct, pos, trades, ticker, shares, price, date=None):
 
 
 def cancel_sell(acct, pos, trades, ticker):
-    """报告建议卖出但实际没卖：放回持仓。"""
+    """The report recommended a sell but the user kept the position."""
     pending = trades.index[(trades.ticker == ticker) & ~trades.confirmed.astype(bool)]
     if not len(pending):
-        raise ValueError(f"没有 {ticker} 的待确认卖出")
+        raise ValueError(f"no pending sale for {ticker}")
     j = pending[-1]
     t = trades.loc[j]
     acct["cash"] -= t.exit * t.shares

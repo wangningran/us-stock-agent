@@ -1,126 +1,118 @@
 # us-stock-agent
 
-美股波段交易研究工具：**分析师评级/目标价变动 + 价格动量 + 大盘过滤**，生成每日盘前操作清单，在 moomoo 手动下单。
+A research and paper-trading tool for a short-term **RSI(2) mean-reversion** strategy on large US stocks
+(plus Bitcoin via the IBIT ETF). Every trading day it generates an order list ~45 minutes before the close,
+which is executed by hand at a broker, and it keeps a model account that tracks the user's actual fills.
 
-> 仅供研究，不构成投资建议。先回测，再模拟盘，最后小资金实盘。
+> Research and paper trading only. Not investment advice. Backtests overstate real results (see Limitations).
 
-## 策略
+## Live strategy
 
-| 环节 | 规则 |
+| Step | Rule |
 |---|---|
-| 股票池 | 历史标普 500 成分股（point-in-time）：每天只交易当时确实在指数里的股票 |
-| 分析师信号（v2） | 近 5 个交易日事件打分：评级上调 +2、下调 −2、首次覆盖看多 +1；目标价调整幅度 ≥10% 才计 ±1；单纯重申评级不计分；总分 ≥ 2 |
-| 动量过滤 | 收盘 > 50 日线 > 200 日线，3 个月涨幅 > 0，RSI < 75 |
-| 大盘过滤 | SPY 在 200 日线下方时不开新仓 |
-| 入场 | 次日限价 = 前收盘 − 0.25×ATR，当日有效，未成交放弃 |
-| 出场 | 止损 −2×ATR，止盈 +3×ATR，浮盈 1R 后止损移到成本价，最多持有 15 天 |
-| 仓位 | 每笔风险 1% 权益，单票 ≤ 10%，最多 8 只 |
+| Universe | Point-in-time S&P 500 members ranked in the **top 150 by 60-day average dollar volume** (a size / popularity proxy with no look-ahead), plus **IBIT** (iShares Bitcoin Trust) |
+| Entry (stocks) | Close > 200-day SMA **and** RSI(2) < 10 **and** market stress (VIX > 20 **or** SPY RSI(2) < 30) **and** MACD histogram > 0 |
+| Entry (IBIT) | Close > 200-day SMA **and** RSI(2) < 10 (no stress / MACD / dollar-volume filters) |
+| Ranking | Lowest RSI(2) first; at most **3 new buys per day** |
+| Sizing | Up to **5 positions**, ~20% of equity each, whole shares |
+| Execution | Market-on-close (or a limit at the reference price) before 12:50 PT |
+| Exit | Close > 5-day SMA (sell at the close), **8% GTC stop**, or a **10-trading-day** time stop |
+| Earnings | Buys and holdings with earnings within 10 trading days are flagged (reminder only) |
 
-全部参数在 `config.yaml`。
+Model account: 7,500 CAD ≈ US$5,260, flat as of 2026-10-05 (`state/account.json`).
 
-## 回测假设（偏保守）
+### Backtest of the live configuration
 
-- 第 t 日收盘后出信号，t+1 日才交易；分析师事件视为发布当天收盘后才知道
-- 限价单必须最低价触及才算成交，低开按开盘价成交
-- 同一根 K 线同时碰到止损和止盈，按止损算；开仓当天不计入止盈
-- 跳空穿过止损按开盘价成交；单边滑点 5bp + 每单佣金
+Zero commission, 5 bp slippage, US$5,260, whole shares, point-in-time S&P 500, IBIT simulated with scaled BTC-USD
+prices before 2024.
 
-**已知局限**：
-- Yahoo 不提供已退市/更名股票的行情，2018 年以来的 694 只成分股中约 85% 有数据，其余缺失（残余幸存者偏差）
-- 代码复用：已退市公司的代码如果被别的公司重新使用，可能取到错误的行情
-- yfinance 的分析师历史不完整，且只有日期级精度
-- 历史财报日需要访问 finance.yahoo.com，目前未纳入回测（每日报告中会实时提示财报日）
-
-## 研究结论（2026-10，回测期 2019-01 ~ 2026-10，样本外从 2024 年开始）
-
-运行 `python scripts/compare_variants.py` 可以复现：
-
-- 手挑 46 只大盘股时期望值约 +0.13R；换成历史标普 500 成分股后降到 **+0.05~0.07R**，年化约 4%，**明显跑输 SPY 买入持有**（15–21%）。说明之前的结果主要来自股票池的事后挑选
-- 事件研究：分析师上调评级当天，股价平均已跑赢 SPY 约 1.4%；**从次日开盘买入，之后 1–60 天没有显著的超额收益**。用免费的日级数据、次日入场，这个信号基本已经被市场消化
-- v2 打分比 v1 和纯动量略好，但差距在噪音范围内
-- 高胜率版本（止盈 1×ATR / 止损 3×ATR）胜率约 73%，期望值反而更低
-
-## 短线高胜率策略对照（`python scripts/compare_meanrev.py`）
-
-均值回归：上升趋势中买短期急跌、反弹即卖。等权最多 10 只，含滑点和佣金，历史标普 500 成分股。
-
-| 规则（收盘成交） | 胜率 | 年化 样本内 / 样本外 | SPY | 最差一笔 |
-|---|---|---|---|---|
-| Connors RSI(2)<10，收盘>5日线卖 | 67% / 64% | 14.9% / 10.9% | 15.6% / 20.8% | −35% |
-| 累积 RSI(2)<35，RSI(2)>65 卖 | 69% / 65% | 17.9% / 4.6% | 同上 | −36% |
-| 累积 RSI(2) + 8% 止损 | 69% / 64% | 20.1% / 3.0% | 同上 | −26% |
-| IBS<0.2 | 65% / 62% | 12.0% / 0.1% | 同上 | −37% |
-| EMA6/EMA12 金叉死叉 | 44% / 39% | 14.5% / −4.1% | 同上 | −19% |
-
-- 均值回归胜率确实 60–70%，但 2024 年以来明显跑输 SPY；次日开盘成交比收盘成交差很多
-- 短均线交叉属于趋势跟踪，胜率天然只有 40% 左右，均线越短来回打脸越多
-- 已退市股票缺失对"买跌"策略是**有利偏差**（跌到退市的股票没被买到），真实表现会更差
-
-## RSI(2) 深入研究（`scripts/research_rsi2.py`、`scripts/final_rsi2.py`）
-
-方法：在 2019–2024（训练期）上逐个叠加 MACD、布林带、ADX、随机指标、成交量、跳空、VIX 等过滤条件，
-只按训练期结果挑选；2025-01 至今（测试期）只用来检验。
-
-- 训练期有效的只有三个：**VIX > 20**、**大盘也超卖（SPY RSI2 < 30）**、**MACD 柱 > 0**；布林带、EMA6>12、50 日线等反而变差
-- 最终候选：`收盘 > 200日线 且 RSI(2) < 10 且 (VIX > 20 或 SPY RSI(2) < 30) 且 MACD 柱 > 0`，
-  收盘 > 5 日线卖出，最多 10 只等权，8% 止损，10 天时间止损，收盘成交
-
-| 区间 | 胜率 | 策略收益 | 最大回撤 | 夏普 | SPY 收益 | SPY 回撤 | SPY 夏普 |
+| Period | Trades | Win rate | CAGR | Max drawdown | Sharpe | SPY CAGR | SPY max DD |
 |---|---|---|---|---|---|---|---|
-| 2025 | 72% | +16.2% | −6.1% | 1.67 | +17.7% | −18.8% | 0.94 |
-| 2026 年初至今 | 66% | +5.8% | −7.8% | 0.83 | +13.7% | −8.9% | 1.37 |
-| 2025+2026 | 69% | +23.0% | −7.8% | 1.31 | +33.9% | −18.8% | 1.07 |
-| 2022（熊市） | 66% | +3.1% | −10.1% | 0.35 | −18.2% | −24.5% | −0.71 |
+| 2019-01 – 2024-12 (train) | 561 | 71.3% | +9.5% | −15.1% | 0.99 | +17.1% | −33.7% |
+| 2025-01 – 2026-10 (test) | 135 | 70.4% | +12.7% | −4.8% | 1.37 | +18.4% | −18.8% |
 
-- 优点：回撤只有 SPY 的一半左右，熊市/急跌年份明显更好
-- 缺点：强牛市年份跑输 SPY；改为次日开盘成交时 2025–26 年化从 12.3% 降到 5.5%，**必须收盘前下单**
+The strategy trades only when the market is under stress, so it can sit in cash for days. It does best in
+sell-offs and bear markets (e.g. 2022: +3% vs SPY −18%) and lags SPY in strong bull markets.
 
-## 实盘每日报告（模拟盘）
+## Daily workflow
 
-`scripts/live_report.py` 每个交易日温哥华时间约 12:15 运行（收盘前约 45 分钟），用实时价近似收盘价：
+1. A scheduled job runs `scripts/live_report.py` at **12:12 PT** on weekdays and pushes the report (in Chinese)
+   by phone notification and email. Market holidays produce a one-line "market closed" message.
+2. The user places market-on-close orders before 12:50 PT and an 8% GTC stop after each buy.
+3. The user reports actual fills; they are recorded with `scripts/record_trade.py`. Unreported trades are assumed
+   filled at the close (shown as ⏳ unconfirmed); reported ones are ✅ confirmed and never overwritten.
+4. State (`state/`) and report archives (`reports/live/`) are committed to the repo after each run.
 
-- **资金**：7500 加币 ≈ 模型账户 US$5,260，全部用于 RSI(2) 策略（2026-10-05 起，空仓开始）
-- **股票池**：标普 500 成分股中，过去 60 天平均成交额**前 150 名**（市值/知名度的替代指标，无前视偏差）
-- **规则**：上面的 RSI(2) 最终规则；最多持有 **5 只**，每只约 20% 资金；**每天最多新买 3 只**（RSI(2) 最低的优先）
-- 回测（零佣金、US$5,260、整股）：2019–24 年化 +9.9%、回撤 −13.6%；2025–26 年化 +11.3%、回撤 −5.2%，胜率约 70%
-- **比特币**：IBIT（贝莱德比特币现货 ETF）作为额外候选，规则为经典 RSI(2)：收盘 > 200 日线且 RSI(2) < 10，不要求市场压力/MACD；与股票共用 5 个仓位
-  - 回测（BTC 现货价格按比例模拟 IBIT）：加入后 2025–26 年化 +11.3% → +12.7%，但 2019–24 年化 +9.9% → +9.5%、回撤 −13.6% → −15.1%
-- **出场**：买入后挂 8% GTC 止损；收盘价高于 5 日线卖出；最多持有 10 天
-- **财报提醒**：买入推荐和持仓若在 10 个交易日内发财报，报告中标出（只提醒，不改变规则）。止损 6%/10%/不设止损的对比见 2026-10 研究，维持 8%
-- **实际成交记录**：报告推荐的买卖先记为「⏳ 未确认」（按收盘价假设成交）；用户告知实际成交后用 `scripts/record_trade.py` 改为「✅ 已确认」，之后的卖出建议、止损价和盈亏都基于实际记录
-- **模型账户**：假设完全按报告执行，状态保存在 `state/`，次日用正式收盘价校正；报告存档在 `reports/live/`
-- 推送示例：[`docs/sample_report_buy.md`](docs/sample_report_buy.md)、[`docs/sample_report_sell.md`](docs/sample_report_sell.md)
+Sample reports: [`docs/sample_report_buy.md`](docs/sample_report_buy.md),
+[`docs/sample_report_sell.md`](docs/sample_report_sell.md).
 
-```bash
-python scripts/live_report.py --init --strategy-capital 5260 --spy-budget 0   # 初始化（已完成）
-python scripts/live_report.py --dry-run                 # 预览今日报告，不改状态
-python scripts/live_report.py --today 2026-10-02 --dry-run --state-dir /tmp/x   # 历史回放
-python scripts/record_trade.py buy MA 2 525.30      # 确认买入（实际股数、价格）
-python scripts/record_trade.py nobuy MA             # 推荐了但没买
-python scripts/record_trade.py sell MA 2 540.00     # 确认卖出
-python scripts/record_trade.py nosell MA            # 建议卖出但没卖
-python scripts/record_trade.py show                 # 查看持仓
-```
-
-## 使用
+## Usage
 
 ```bash
 pip install -r requirements.txt
-python -m pytest -q tests                              # 单元测试
-python scripts/run_backtest.py --split 2024-01-01      # 回测：样本内 / 样本外
-python scripts/daily_report.py --equity 50000          # 生成今日报告 → reports/YYYY-MM-DD.md
-python scripts/run_backtest.py --synthetic             # 无网络时用合成数据验证流程
+python -m pytest -q tests
+
+# live report
+python scripts/live_report.py                    # today's report, updates state/
+python scripts/live_report.py --dry-run          # preview without changing state
+python scripts/live_report.py --today 2026-10-02 --dry-run --state-dir /tmp/x   # replay a past day
+
+# record actual fills
+python scripts/record_trade.py buy MA 2 525.30   # confirm a buy (shares, price)
+python scripts/record_trade.py nobuy MA          # recommended but not bought
+python scripts/record_trade.py sell MA 2 540.00  # confirm a sell
+python scripts/record_trade.py nosell MA         # recommended sell not executed
+python scripts/record_trade.py show              # positions and cash
+
+# research
+python scripts/compare_meanrev.py                # RSI(2) / cumulative RSI(2) / IBS / EMA6-12 comparison
+python scripts/research_rsi2.py                  # single technical filters on top of RSI(2)
+python scripts/research_rsi2.py combos           # filter combinations x exits x sizing
+python scripts/final_rsi2.py                     # year-by-year results of the selected rule
 ```
 
-持仓记录：复制 `positions.example.csv` 为 `positions.csv`，成交后添加一行、平仓后删除。
+## Research summary (2026-10)
 
-## 报告时间（温哥华时间）
+All tests use the point-in-time S&P 500, train 2019–2024 and test 2025-01 onward unless noted.
 
-美股常规交易时段为太平洋时间 06:30–13:00。
+1. **Analyst ratings + momentum (v1, legacy).** A hand-picked list of 46 large caps looked good (+0.13R per trade),
+   but on the point-in-time S&P 500 the edge fell to +0.05–0.07R and ~4% CAGR, far below SPY. An event study showed
+   upgrades move the stock ~1.4% on the day, with no excess return from the next open over 1–60 days.
+2. **Short-term rules.** Mean reversion (Connors RSI(2), cumulative RSI(2), IBS) gives 60–70% win rates;
+   short moving-average crossovers (EMA6/EMA12) win only ~40% and lost money out of sample.
+3. **Filters on RSI(2).** Of 22 filters (MACD, Bollinger Bands, ADX, stochastics, volume, gaps, VIX, ...), only
+   VIX > 20, SPY RSI(2) < 30 and MACD histogram > 0 helped in the train period; the combination was selected on
+   train data and then checked on the test period.
+4. **Execution and costs.** Next-open execution roughly halves returns, so orders must go in before the close.
+   With small accounts a US$1–2 minimum commission per order erases the edge; the strategy needs a zero-commission
+   broker.
+5. **Add-ons tested on the live configuration.** Market-above-200-day, gap filters, volume filters, longer/shorter
+   time stops and tighter stops did not help consistently. A 10% stop or no stop scored slightly better, but the
+   8% stop was kept to cap single-trade losses (no-stop worst trade: −25%).
 
-- **05:30** 盘前报告：今日挂单（限价 + 附加止损/止盈）和持仓调整
-- **13:30** 收盘复盘（可选）
+## Limitations
 
-## 数据源
+- Yahoo has no prices for delisted / renamed tickers; ~85% of the 694 S&P 500 members since 2018 have data. The
+  missing names bias dip-buying strategies upward.
+- Ticker reuse can attach a different company's prices to an old symbol.
+- The live report uses prices ~45 minutes before the close; signals near thresholds can change by the close.
+- Historical earnings dates were not available (finance.yahoo.com blocked), so the earnings filter is untested
+  and only used as a reminder.
+- The dollar-volume ranking and 5-position sizing were chosen after seeing both periods, so the test-period
+  numbers for those choices are optimistic.
+- The live report aborts if fewer than 90% of current index members have data (e.g. Yahoo rate limiting).
 
-v1 只用免费的 yfinance（日线行情、分析师评级变动、财报日期）。如果回测证明信号有效、需要更完整的分析师历史，再考虑 FMP（约 US$19–22/月）等付费源。
+## Repository layout
+
+| Path | Purpose |
+|---|---|
+| `agent/live_rsi2.py` | Live strategy rules, model account, report rendering |
+| `agent/ledger.py` | Confirm / cancel buys and sells from actual fills |
+| `agent/meanrev.py` | Mean-reversion features, extended indicators, signal backtester, dollar-volume rank |
+| `agent/data.py`, `agent/universe.py` | yfinance data with CSV cache; point-in-time S&P 500 membership |
+| `agent/signals.py`, `strategy.py`, `backtest.py`, `report.py`, `metrics.py` | Legacy v1 analyst + momentum strategy |
+| `scripts/` | Live report, trade recording, research and backtest entry points |
+| `state/` | Model account (`account.json`, `positions.csv`, `trades.csv`) |
+| `reports/live/` | Archive of daily reports |
+| `tests/` | Unit tests (fills, look-ahead, membership, live flow, ledger) |
+| `config.yaml` | Data settings and legacy v1 parameters |

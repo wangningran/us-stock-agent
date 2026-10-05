@@ -20,7 +20,7 @@ def _px(closes, start="2025-01-01"):
 
 
 def _world(last_moves):
-    """一只股票长期上涨、近期加速后横盘，最后几天按 last_moves 变化；VIX 高位。"""
+    """One stock in a long uptrend, a recent rally then a pause, then last_moves; VIX elevated."""
     base = list(np.linspace(50, 80, 280))
     rally = [base[-1] * 1.03 ** k for k in range(1, 21)]
     flat = list(rally[-1] * np.cumprod([1.002] * 3))
@@ -31,17 +31,17 @@ def _world(last_moves):
 
 
 def test_buy_then_reconcile_then_sell(tmp_path):
-    # 连跌三天触发 RSI(2) 超卖 → 买入
+    # consecutive down days push RSI(2) into oversold -> buy
     prices, bench, vix = _world([0.97, 0.97])
     acct = default_account(10000, 2000)
     d = bench.index[-1]
     rep, acct, pos, tr = run_live(prices, bench, vix, None, acct, EMPTY_POS, EMPTY_TR, d)
     assert "买入 AAA" in rep and len(pos) == 1 and bool(pos.provisional.iloc[0])
-    assert acct["spy"]["done"] == 1                       # 首次运行买第一批指数
+    assert acct["spy"]["done"] == 1                       # first run buys the first index tranche
     save_state(acct, pos, tr, tmp_path)
     acct, pos, tr = load_state(tmp_path)
 
-    # 次日大涨，收盘站上 5 日线 → 卖出；并用正式收盘价校正买入价
+    # next day rallies above the 5-day SMA -> sell; entry reconciled to the official close
     prices2, bench2, vix2 = _world([0.97, 0.97, 1.06])
     d2 = bench2.index[-1]
     rep2, acct, pos, tr = run_live(prices2, bench2, vix2, None, acct, pos, tr, d2)

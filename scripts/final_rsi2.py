@@ -1,4 +1,4 @@
-"""最终候选：RSI(2) + 市场压力 + MACD 柱 > 0。逐年表现、2025/2026 单独统计、与 SPY 组合。
+"""Final candidate: RSI(2) + market stress + MACD histogram > 0. Year-by-year results, 2025/2026 split, SPY blend.
 
   python scripts/final_rsi2.py
 """
@@ -30,9 +30,9 @@ def main():
         tr, eq = run_mr_backtest(feats, bench, mode="close", start="2019-01-01", stop_pct=stop)
         r = eq.pct_change().fillna(0)
         tr["exit_date"] = pd.to_datetime(tr["exit_date"])
-        print(f"\n===== {'8% 止损' if stop else '无止损'}：逐年 =====")
-        print(f"{'年份':<10}{'笔数':>5}{'胜率':>7}{'每笔':>8}{'策略收益':>9}{'策略回撤':>9}{'夏普':>6}"
-              f"{'SPY收益':>9}{'SPY回撤':>9}{'SPY夏普':>7}{'5:5组合':>9}{'持仓天数占比':>12}")
+        print(f"\n===== {'8% stop' if stop else 'no stop'}: by year =====")
+        print(f"{'period':<10}{'trades':>6}{'win':>7}{'avg':>8}{'return':>9}{'MDD':>9}{'Sharpe':>7}"
+              f"{'SPY ret':>9}{'SPY MDD':>9}{'SPY Sh':>7}{'50/50':>9}{'days in mkt':>12}")
         periods = [(str(y), f"{y}-01-01", f"{y + 1}-01-01") for y in range(2019, 2027)]
         periods += [("2025+2026", "2025-01-01", "2027-01-01")]
         for name, s, e in periods:
@@ -49,10 +49,10 @@ def main():
             print(f"{name:<10}{len(t):>5}{win:>7.1%}{t.ret.mean() if len(t) else np.nan:>+8.2%}{tot:>+9.1%}{mdd:>9.1%}{sh:>6.2f}"
                   f"{stot:>+9.1%}{smdd:>9.1%}{ssh:>7.2f}{btot:>+9.1%}{days_in:>12.0%}")
         m = mr_summary(tr[tr.exit_date >= "2025-01-01"], eq[eq.index >= "2025-01-01"])
-        print(f"2025 至今：均盈 {m['avg_win']:.1%} 均亏 {m['avg_loss']:.1%} 利润因子 {m['pf']:.2f} "
-              f"平均持有 {m['days']:.1f} 天 最差一笔 {m['worst']:.1%}")
+        print(f"2025 to date: avg win {m['avg_win']:.1%}, avg loss {m['avg_loss']:.1%}, profit factor {m['pf']:.2f}, "
+              f"avg hold {m['days']:.1f} days, worst trade {m['worst']:.1%}")
         worst = tr[tr.exit_date >= "2025-01-01"].nsmallest(5, "ret")[["ticker", "entry_date", "exit_date", "ret", "reason"]]
-        print("2025 至今最差 5 笔：\n" + worst.to_string(index=False))
+        print("Worst 5 trades since 2025:\n" + worst.to_string(index=False))
 
 
 if __name__ == "__main__":

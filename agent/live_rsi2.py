@@ -1,11 +1,12 @@
-"""实盘每日报告：RSI(2) 均值回归策略 + SPY 分批建仓，维护一个"模型账户"。
+"""Live daily report: RSI(2) mean-reversion strategy (plus an optional index sleeve) on a model account.
 
-假设你完全按报告执行：
-- 报告在收盘前约 30 分钟生成，用当时的实时价近似收盘价
-- 买卖都按收盘价成交（收盘市价单 MOC，或 12:50 前按参考价挂限价单）
-- 买入后立即挂 8% 的 GTC 止损单
+Assumes the user follows the report:
+- the report is generated ~45 minutes before the close and uses live prices as a proxy for the close
+- buys and sells fill at the close (market-on-close, or a limit at the reference price before 12:50 PT)
+- an 8% GTC stop is placed right after each buy
 
-状态保存在 state/ 目录（提交到仓库），下次运行时用正式收盘价校正上次的近似成交价。
+State lives in state/ (committed to the repo). The next run reconciles provisional fills to official closes,
+except fills the user has confirmed via agent/ledger.py. The report text itself is in Chinese for the user.
 """
 from __future__ import annotations
 
@@ -24,15 +25,15 @@ STATE_DIR = ROOT / "state"
 POS_COLS = ["ticker", "entry_date", "entry", "shares", "stop", "provisional", "confirmed"]
 TRADE_COLS = ["ticker", "entry_date", "entry", "exit_date", "exit", "shares", "pnl", "ret", "reason", "provisional",
               "confirmed"]
-EXTRA_LABELS = {"IBIT": "比特币 ETF"}
+EXTRA_LABELS = {"IBIT": "比特币 ETF"}   # report label (Chinese, user-facing)
 
 
 def extra_entry_rule(d, m):
-    """比特币等额外标的：经典 RSI(2)，不要求市场压力 / MACD / 成交额排名。"""
+    """Extra symbols such as Bitcoin: classic RSI(2), without the market-stress / MACD / dollar-volume filters."""
     return (d.close > d.sma200) & (d.rsi2 < 10)
 
 
-# ---------- 策略规则（与 scripts/final_rsi2.py 一致） ----------
+# ---------- Strategy rules (same as scripts/final_rsi2.py) ----------
 def entry_rule(d, m):
     stress = (m.vix > 20) | (m.spy_rsi2 < 30)
     return (d.close > d.sma200) & (d.rsi2 < 10) & stress & (d.macd_hist > 0)
@@ -46,7 +47,7 @@ def rank_rule(d, m):
     return d.rsi2
 
 
-# ---------- 状态 ----------
+# ---------- State ----------
 def default_account(strategy_capital: float, spy_budget: float, tranches: int = 4, weekday: int = 3) -> dict:
     return {
         "strategy_capital": strategy_capital, "cash": strategy_capital,
@@ -85,7 +86,7 @@ def save_state(acct, pos, trades, state_dir: Path = STATE_DIR):
     trades.to_csv(state_dir / "trades.csv", index=False)
 
 
-# ---------- 主流程 ----------
+# ---------- Main flow ----------
 @dataclass
 class Order:
     side: str          # BUY / SELL
@@ -105,10 +106,10 @@ def _official_close(feats, t, day):
 def run_live(prices: dict[str, pd.DataFrame], bench: pd.DataFrame, vix: pd.DataFrame, members: pd.DataFrame | None,
              acct: dict, pos: pd.DataFrame, trades: pd.DataFrame, today: pd.Timestamp,
              core: pd.DataFrame | None = None, extras: dict[str, pd.DataFrame] | None = None):
-    """返回 (report_markdown, acct, pos, trades)。today 为美东日期（normalize）。
+    """Return (report_markdown, acct, pos, trades). `today` is the US/Eastern date (normalized).
 
-    core：核心指数 ETF（默认 SPYM）的行情；None 时用 bench。
-    extras：额外标的（如 IBIT 比特币 ETF）的行情，使用 extra_entry_rule。
+    core: prices of the index ETF sleeve (default SPYM); None falls back to bench.
+    extras: prices of extra symbols (e.g. IBIT) traded with extra_entry_rule.
     """
     core = bench if core is None else core
     day = bench.index[-1]
@@ -129,7 +130,7 @@ def run_live(prices: dict[str, pd.DataFrame], bench: pd.DataFrame, vix: pd.DataF
     trades = trades.copy()
     notes = []
 
-    # 1) 用正式收盘价校正以前的近似成交价
+    # 1) Reconcile earlier provisional fills to official closes (confirmed fills are left alone)
     for i, r in pos.iterrows():
         if r.provisional and not r.confirmed and r.entry_date < day:
             px = _official_close(feats, r.ticker, r.entry_date)
@@ -157,7 +158,7 @@ def run_live(prices: dict[str, pd.DataFrame], bench: pd.DataFrame, vix: pd.DataF
                 f["price"] = px
             f["provisional"] = False
 
-    # 2) 持仓：止损 / 卖出信号 / 时间止损
+    # 2) Holdings: stop / exit signal / time stop
     orders: list[Order] = []
     holdings = []
     keep = []
@@ -169,7 +170,7 @@ def run_live(prices: dict[str, pd.DataFrame], bench: pd.DataFrame, vix: pd.DataF
             continue
         bar = df.loc[day]
         held = int((df.index > r.entry_date).sum())
-        last4 = float(df.close.iloc[-5:-1].mean())      # 今日收盘需高于此价 ⇔ 收盘 > 5 日线
+        last4 = float(df.close.iloc[-5:-1].mean())      # today's close above this <=> close above the 5-day SMA
         exit_px, reason = None, None
         if r.entry_date < day and bar.low <= r.stop:
             exit_px, reason = float(min(bar.open, r.stop)), "stop"
@@ -196,13 +197,13 @@ def run_live(prices: dict[str, pd.DataFrame], bench: pd.DataFrame, vix: pd.DataF
             holdings.append((r, float(bar.close), last4, held, "持有"))
     pos = pos.loc[keep].reset_index(drop=True)
 
-    # 3) 估算权益
+    # 3) Estimate equity
     def px_now(t):
         df = feats.get(t)
         return float(df.close.iloc[-1]) if df is not None else None
     equity = acct["cash"] + sum(r.shares * (px_now(r.ticker) or r.entry) for _, r in pos.iterrows())
 
-    # 4) 新开仓
+    # 4) New entries
     m_today = mkt.loc[day]
     stress = bool((m_today.vix > 20) or (m_today.spy_rsi2 < 30))
     slots = maxp - len(pos)
@@ -236,7 +237,7 @@ def run_live(prices: dict[str, pd.DataFrame], bench: pd.DataFrame, vix: pd.DataF
         orders.append(Order("BUY", t, shares, price, why))
         slots -= 1
 
-    # 5) SPY 分批建仓
+    # 5) Index sleeve tranche buying
     spy = acct["spy"]
     spy_order = None
     spy_px = float(core.close.iloc[-1])
@@ -245,7 +246,7 @@ def run_live(prices: dict[str, pd.DataFrame], bench: pd.DataFrame, vix: pd.DataF
         remaining_budget = spy["budget"] - spy["cost"]
         amount = remaining_budget / (spy["tranches"] - spy["done"])
         sh = math.floor(amount / spy_px)
-        if sh < 1 and remaining_budget >= spy_px:   # 每批预算不足 1 股时，至少买 1 股
+        if sh < 1 and remaining_budget >= spy_px:   # buy at least one share when a tranche is smaller than one share
             sh = 1
         if sh >= 1:
             spy["shares"] += sh
@@ -268,11 +269,11 @@ def run_live(prices: dict[str, pd.DataFrame], bench: pd.DataFrame, vix: pd.DataF
 
 _NAMES: dict[str, str] = {}
 _EARN: dict[str, object] = {}
-EARNINGS_WARN_DAYS = 10   # 与时间止损一致：预计持有期内
+EARNINGS_WARN_DAYS = 10   # same as the time stop: within the expected holding period
 
 
 def _next_earnings(ticker: str, day: pd.Timestamp):
-    """下一个财报日（yfinance calendar），取不到返回 None。"""
+    """Next earnings date from the yfinance calendar, or None."""
     if ticker not in _EARN:
         try:
             import yfinance as yf
@@ -285,7 +286,7 @@ def _next_earnings(ticker: str, day: pd.Timestamp):
 
 
 def _earnings_text(ticker: str, day: pd.Timestamp) -> tuple[str, bool]:
-    """返回（说明文字, 是否在预计持有期内）。"""
+    """Return (text, within the expected holding period)."""
     ed = _next_earnings(ticker, day)
     if ed is None:
         return "", False
@@ -294,7 +295,7 @@ def _earnings_text(ticker: str, day: pd.Timestamp) -> tuple[str, bool]:
 
 
 def _name(ticker: str) -> str:
-    """公司名（yfinance），取不到就返回空。"""
+    """Company name from yfinance, or an empty string."""
     if ticker not in _NAMES:
         try:
             import yfinance as yf
@@ -322,7 +323,7 @@ def _render(day, m, stress, orders, spy_order, holdings, pos, trades, acct, equi
         if o.side == "SELL":
             L.append(f"{i}. 🔴 **卖出 {o.ticker}{_name(o.ticker)} {o.shares} 股**，参考价 ${o.ref_price:.2f}，收盘市价单（MOC）。{o.note}")
         elif o.ticker == acct["spy"].get("ticker", "SPY"):
-            L.append(f"{i}. 🟢 **买入 SPY {o.shares} 股**，参考价 ${o.ref_price:.2f}（约 ${o.shares * o.ref_price:,.0f}）。"
+            L.append(f"{i}. 🟢 **买入 {o.ticker} {o.shares} 股**，参考价 ${o.ref_price:.2f}（约 ${o.shares * o.ref_price:,.0f}）。"
                      f"{o.note}，长期持有，不设止损")
         else:
             stop = o.ref_price * (1 - acct['stop_pct'])

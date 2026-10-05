@@ -1,14 +1,14 @@
-"""短线均值回归（高胜率类策略）+ 短均线趋势策略，统一的信号式回测。
+"""Short-term mean reversion (high win-rate style) and short moving-average trend rules, with a signal backtester.
 
-经典规则参考：
-- Larry Connors RSI(2)：收盘 > 200 日线，RSI(2) < 10 买入；收盘 > 5 日线卖出
-- 累积 RSI(2)：两日 RSI(2) 之和 < 35 买入；RSI(2) > 65 卖出
-- IBS（收盘在当日高低区间的位置）< 0.2 且收跌买入；收盘高于前一日最高价卖出
-- EMA6/EMA12 金叉买入、死叉卖出（短均线趋势跟踪）
+Reference rules:
+- Larry Connors RSI(2): close > 200-day SMA and RSI(2) < 10 -> buy; close > 5-day SMA -> sell
+- Cumulative RSI(2): two-day RSI(2) sum < 35 -> buy; RSI(2) > 65 -> sell
+- IBS (close position within the day's range) < 0.2 on a down day -> buy; close above prior high -> sell
+- EMA6 / EMA12 crossover (short moving-average trend following)
 
-执行方式：
-- close：信号日收盘成交（需在收盘前约 15 分钟按近似价格下市价收盘单 MOC）
-- open ：信号日次日开盘成交（看盘前报告下单）
+Execution modes:
+- close: fill at the signal day's close (market-on-close order placed ~15 minutes before the close)
+- open:  fill at the next day's open (orders placed from a pre-market report)
 """
 from __future__ import annotations
 
@@ -41,7 +41,7 @@ def mr_features(px: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-# 每条规则：entry(df) / exit(df) 返回 bool Series（收盘后判断），rank(df) 越小越优先
+# Each rule: entry(df) / exit(df) return bool Series evaluated at the close; lower rank(df) is preferred
 RULES = {
     "rsi2": dict(
         entry=lambda d: (d.close > d.sma200) & (d.rsi2 < 10),
@@ -63,7 +63,7 @@ RULES = {
         entry=lambda d: (d.close > d.sma200) & (d.ema6 > d.ema12) & (d.ema6.shift(1) <= d.ema12.shift(1)),
         exit=lambda d: d.ema6 < d.ema12,
         rank=lambda d: -d.mom63),
-    "ema_trend_rsi2_dip": dict(   # 短期上升趋势中的急跌
+    "ema_trend_rsi2_dip": dict(   # sharp dip inside a short-term uptrend
         entry=lambda d: (d.close > d.sma200) & (d.ema6 > d.ema12) & (d.rsi2 < 15),
         exit=lambda d: d.close > d.sma5,
         rank=lambda d: d.rsi2),
@@ -88,7 +88,7 @@ def run_mr_backtest(feats: dict[str, pd.DataFrame], bench: pd.DataFrame, *, mode
                     max_positions: int = 10, time_stop: int = 10, stop_pct: float | None = None,
                     slippage_bps: float = 5, commission: float = 1.0, equity0: float = 100_000,
                     market_filter: bool = False, start=None, end=None, max_new_per_day: int | None = None):
-    """信号式回测。等权：每笔 = 权益 / max_positions。"""
+    """Signal backtest with equal weights: each position = equity / max_positions."""
     days = bench.index
     if start:
         days = days[days >= pd.Timestamp(start)]
@@ -126,7 +126,7 @@ def run_mr_backtest(feats: dict[str, pd.DataFrame], bench: pd.DataFrame, *, mode
 
     for day in days:
         o, h, l, c = P["open"].loc[day], P["high"].loc[day], P["low"].loc[day], P["close"].loc[day]
-        # 次日开盘执行（open 模式）
+        # Next-open execution (open mode)
         if mode == "open":
             for t in list(pend_sell):
                 if t in pos and pd.notna(o[t]):
@@ -137,14 +137,14 @@ def run_mr_backtest(feats: dict[str, pd.DataFrame], bench: pd.DataFrame, *, mode
                 if t not in pos and len(pos) < max_positions and pd.notna(o[t]):
                     buy(t, o[t], day, eq_open)
             pend_buy = []
-        # 盘中止损
+        # Intraday stop
         if stop_pct:
             for t in list(pos):
                 p = pos[t]
                 stop = p["px"] * (1 - stop_pct)
                 if pd.notna(l[t]) and l[t] <= stop and p["d"] != day:
                     sell(t, min(o[t], stop), day, "stop")
-        # 收盘：更新持有天数，判断出场
+        # At the close: update holding days, check exits
         for t in list(pos):
             p = pos[t]
             if p["d"] == day or pd.isna(c[t]):
@@ -158,7 +158,7 @@ def run_mr_backtest(feats: dict[str, pd.DataFrame], bench: pd.DataFrame, *, mode
                     pend_sell.add(t)
         equity = cash + sum(p["sh"] * closes_ff.at[day, t] for t, p in pos.items())
         curve[day] = equity
-        # 收盘：新信号
+        # At the close: new signals
         if market_filter and not bool(mkt.get(day, False)):
             continue
         slots = max_positions - len(pos) + (len(pend_sell) if mode == "open" else 0)
@@ -198,17 +198,17 @@ def mr_summary(tr: pd.DataFrame, eq: pd.Series) -> dict:
     )
 
 
-# ---------------- 扩展指标：用于在 RSI(2) 上叠加过滤 ----------------
+# ---------------- Extended indicators used as filters on top of RSI(2) ----------------
 
 def ext_features(px: pd.DataFrame) -> pd.DataFrame:
-    """在 mr_features 基础上加 MACD / 布林带 / ADX / 成交量 / 跳空 / 波动率等。"""
+    """mr_features plus MACD, Bollinger Bands, ADX, volume, gap and volatility features."""
     d = mr_features(px)
     c, h, l = d["close"], d["high"], d["low"]
     d["sma20"] = c.rolling(20).mean()
     d["sma50"] = c.rolling(50).mean()
     sd20 = c.rolling(20).std()
     d["bb_lower"] = d["sma20"] - 2 * sd20
-    d["bb_pctb"] = (c - d["bb_lower"]) / (4 * sd20)          # 布林 %B，<0 表示跌破下轨
+    d["bb_pctb"] = (c - d["bb_lower"]) / (4 * sd20)          # Bollinger %B; < 0 means below the lower band
     ema12, ema26 = c.ewm(span=12, adjust=False).mean(), c.ewm(span=26, adjust=False).mean()
     d["macd"] = ema12 - ema26
     d["macd_sig"] = d["macd"].ewm(span=9, adjust=False).mean()
@@ -228,7 +228,7 @@ def ext_features(px: pd.DataFrame) -> pd.DataFrame:
     d["vol_ratio"] = d["volume"] / d["volume"].rolling(20).mean()
     d["gap"] = d["open"] / prev_c - 1
     d["ret1"] = c / prev_c - 1
-    d["dd10"] = c / h.rolling(10).max() - 1                     # 距 10 日高点回撤
+    d["dd10"] = c / h.rolling(10).max() - 1                     # drawdown from the 10-day high
     low14, high14 = l.rolling(14).min(), h.rolling(14).max()
     d["stoch_k"] = 100 * (c - low14) / (high14 - low14).replace(0, np.nan)
     d["down_days"] = (c < prev_c).astype(int).groupby((c >= prev_c).cumsum()).cumsum()
@@ -247,7 +247,7 @@ def market_context(bench: pd.DataFrame, vix: pd.DataFrame | None) -> pd.DataFram
 
 def build_custom(base: dict[str, pd.DataFrame], mkt: pd.DataFrame, entry, exit_, rank,
                  members: pd.DataFrame | None = None) -> dict[str, pd.DataFrame]:
-    """base：已算好 ext_features 的字典；entry/exit_/rank 接收 (d, mkt) 返回 Series。"""
+    """base: dict of ext_features frames; entry / exit_ / rank take (d, mkt) and return Series."""
     out = {}
     for t, d0 in base.items():
         d = d0.copy()
@@ -263,9 +263,9 @@ def build_custom(base: dict[str, pd.DataFrame], mkt: pd.DataFrame, entry, exit_,
 
 def add_dollar_volume_rank(base: dict[str, pd.DataFrame], index: pd.DatetimeIndex,
                            members: pd.DataFrame | None = None, window: int = 60) -> None:
-    """按过去 window 天平均成交额（价格 × 成交量）在当日成分股中横向排名，写入 base[t]["dv_rank"]（1 = 最大）。
+    """Rank index members each day by `window`-day average dollar volume; writes base[t]["dv_rank"] (1 = largest).
 
-    作为"市值/知名度"的替代：只用当时已知的数据，没有前视偏差。
+    A point-in-time proxy for size / popularity that only uses data known at the time (no look-ahead).
     """
     dv = pd.DataFrame({t: (d.close * d.volume).rolling(window).mean() for t, d in base.items()}).reindex(index)
     if members is not None:

@@ -1,4 +1,4 @@
-"""交易规则：挂单计划 + 持仓出场判断。回测和每日报告共用同一套规则，保证报告 = 回测过的策略。"""
+"""Legacy v1 trade rules: order planning and exit checks shared by the v1 backtest and v1 daily report."""
 from __future__ import annotations
 
 import math
@@ -14,7 +14,7 @@ class OrderPlan:
     limit: float
     atr: float
     shares: int
-    stop: float          # 按限价估算，成交后按实际成交价重算
+    stop: float          # estimated from the limit; recomputed from the actual fill
     target: float
     analyst_score: float
     mom: float
@@ -29,7 +29,7 @@ class Position:
     shares: int
     stop: float
     target: float
-    initial_risk: float  # 每股 1R
+    initial_risk: float  # 1R per share
     signal_date: pd.Timestamp | None = None
     days_held: int = 0
     meta: dict = field(default_factory=dict)
@@ -54,7 +54,7 @@ def plan_order(ticker: str, day: pd.Timestamp, row: pd.Series, equity: float, cf
 
 
 def try_fill(order: OrderPlan, bar: pd.Series) -> float | None:
-    """当日限价买单是否成交。要求最低价触及限价；低开则按开盘价成交。"""
+    """Whether a day-only limit buy fills: the low must touch the limit; a gap below fills at the open."""
     if bar["low"] <= order.limit:
         return float(min(bar["open"], order.limit))
     return None
@@ -71,9 +71,9 @@ def open_position(order: OrderPlan, fill: float, day: pd.Timestamp, cfg: dict) -
 
 
 def check_exit(pos: Position, bar: pd.Series, cfg: dict, fill_day: bool = False) -> tuple[float, str] | None:
-    """用日线判断出场。同一根K线同时触及止损和止盈时，保守地按止损处理。
+    """Exit check on a daily bar. If a bar touches both stop and target, assume the stop (conservative).
 
-    fill_day=True：开仓当天只检查止损（无法确定盘中先后顺序，不计入止盈）。
+    fill_day=True: on the entry day only the stop is checked (intraday order is unknown, so no target).
     """
     o, h, l, c = bar["open"], bar["high"], bar["low"], bar["close"]
     if not fill_day:
@@ -91,7 +91,7 @@ def check_exit(pos: Position, bar: pd.Series, cfg: dict, fill_day: bool = False)
 
 
 def update_trailing(pos: Position, bar: pd.Series, cfg: dict) -> None:
-    """收盘后更新：浮盈达到 breakeven_at_r 后，止损上移到成本价（次日起生效）。"""
+    """After the close: once the gain reaches breakeven_at_r, move the stop to entry (effective next day)."""
     be = cfg["trade"].get("breakeven_at_r")
     if be and bar["high"] >= pos.entry + be * pos.initial_risk:
         pos.stop = max(pos.stop, pos.entry)

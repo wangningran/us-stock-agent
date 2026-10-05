@@ -43,7 +43,7 @@ def test_partial_sell_and_cancel_sell():
     acct, pos, tr = ledger.confirm_sell(acct, pos, tr, "NVDA", 4, 110.0)
     assert pos.iloc[0].shares == 6 and len(tr) == 1 and tr.iloc[0].pnl == pytest.approx(40)
     assert acct["cash"] == pytest.approx(10000 - 1000 + 440)
-    # 报告记下一笔未确认卖出，用户说没卖 → 放回持仓
+    # report recorded an unconfirmed sell; user says they did not sell -> back to holdings
     tr = pd.concat([tr, pd.DataFrame([{"ticker": "NVDA", "entry_date": pd.Timestamp("2026-10-01"), "entry": 100.0,
                                        "exit_date": pd.Timestamp("2026-10-06"), "exit": 120.0, "shares": 6, "pnl": 120,
                                        "ret": 0.2, "reason": "signal", "provisional": True, "confirmed": False}])],
@@ -70,3 +70,11 @@ def test_confirmed_price_not_overwritten_by_close(tmp_path):
         assert held.iloc[0].entry == 123.45
     else:
         assert tr[tr.ticker == "AAA"].iloc[-1].entry == 123.45
+
+
+def test_buying_more_of_a_confirmed_holding_adds_a_lot():
+    acct, pos, tr = _empty()
+    acct, pos = ledger.confirm_buy(acct, pos, "MSFT", 2, 500.0)
+    acct, pos = ledger.confirm_buy(acct, pos, "MSFT", 1, 480.0)
+    assert len(pos) == 2 and sorted(pos.entry.tolist()) == [480.0, 500.0]
+    assert acct["cash"] == pytest.approx(10000 - 1000 - 480)

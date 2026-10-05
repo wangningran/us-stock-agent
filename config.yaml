@@ -1,10 +1,13 @@
-# ---- 股票池 ----
-# sp500_pit     : 历史标普 500 成分股，每天只交易当时的成分股（推荐，减少幸存者偏差）
-# sp500_current : 今天的标普 500 成分股（有幸存者偏差，仅用于对比）
-# list          : 使用下面的 universe 列表
+# Configuration for data loading and the legacy v1 analyst + momentum strategy / backtests.
+# The live RSI(2) strategy's parameters live in state/account.json and agent/live_rsi2.py.
+
+# ---- Universe ----
+# sp500_pit     : point-in-time S&P 500 members; each day only that day's members trade (recommended)
+# sp500_current : today's S&P 500 members (survivorship-biased, comparison only)
+# list          : the `universe` list below
 universe_mode: sp500_pit
 
-# universe_mode = list 时使用。注意：手挑今天的名单回测会严重偏乐观。
+# Used when universe_mode = list. A hand-picked list of today's winners makes backtests very optimistic.
 universe:
   - AAPL
   - MSFT
@@ -56,37 +59,37 @@ universe:
 benchmark: SPY
 
 data:
-  start: "2018-01-01"          # 多取一年用于计算 200 日线
+  start: "2018-01-01"          # one extra year of history for the 200-day SMA
   cache_dir: data
   workers: 8
 
 backtest:
   start: "2019-01-01"
-  split: "2024-01-01"          # 样本外起点
+  split: "2024-01-01"          # out-of-sample start
 
-# ---- 信号 ----
+# ---- Signals (legacy v1) ----
 signals:
-  scoring: v2                   # v1: 任何目标价上调都计分；v2: 只认评级变动和 ≥10% 的目标价调整
+  scoring: v2                   # v1: any target raise scores; v2: only rating changes and >=10% target moves
   pt_min_change: 0.10
-  analyst_lookback_days: 5      # 统计最近 N 个交易日的分析师事件
-  min_analyst_score: 2          # 分析师分数 >= 该值才考虑
-  rsi_max: 75                   # 超买过滤
-  mom_lookback: 63              # 约 3 个月动量
-  market_filter: true           # 基准在 200 日线下方时不开新仓
+  analyst_lookback_days: 5      # analyst events counted over the last N trading days
+  min_analyst_score: 2          # minimum analyst score
+  rsi_max: 75                   # overbought filter
+  mom_lookback: 63              # ~3-month momentum
+  market_filter: true           # no new entries while the benchmark is below its 200-day SMA
 
-# ---- 入场 / 出场 ----
+# ---- Entry / exit (legacy v1) ----
 trade:
-  entry_atr_mult: 0.25          # 限价 = 前收盘 - 0.25 * ATR（等小回调，不追高）
-  stop_atr_mult: 2.0            # 止损 = 成交价 - 2 * ATR
-  target_atr_mult: 3.0          # 止盈 = 成交价 + 3 * ATR
-  max_hold_days: 15             # 时间止损
-  breakeven_at_r: 1.0           # 浮盈达到 1R 后止损移到成本价
+  entry_atr_mult: 0.25          # limit = prior close - 0.25 * ATR (wait for a small pullback)
+  stop_atr_mult: 2.0            # stop = fill - 2 * ATR
+  target_atr_mult: 3.0          # target = fill + 3 * ATR
+  max_hold_days: 15             # time stop
+  breakeven_at_r: 1.0           # move the stop to entry after a 1R gain
 
-# ---- 仓位 / 风控 ----
+# ---- Sizing / risk (legacy v1) ----
 risk:
   initial_equity: 100000
-  risk_per_trade: 0.01          # 每笔最多亏账户的 1%
-  max_position_pct: 0.10        # 单票最多 10% 仓位
+  risk_per_trade: 0.01          # max loss per trade: 1% of equity
+  max_position_pct: 0.10        # max 10% of equity per position
   max_positions: 8
-  slippage_bps: 5               # 单边滑点
-  commission_per_order: 1.0     # 单笔佣金（美元），按你 moomoo 实际费率修改
+  slippage_bps: 5               # one-way slippage
+  commission_per_order: 1.0     # commission per order (USD); set to your broker's actual fee

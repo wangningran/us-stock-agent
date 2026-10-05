@@ -1,4 +1,4 @@
-"""日线事件驱动回测。第 t 日收盘出信号 → 第 t+1 日限价单（当日有效）→ 括号单出场。"""
+"""Daily-bar event-driven backtest: signal at close of day t -> day-only limit order on t+1 -> bracket exits."""
 from __future__ import annotations
 
 import pandas as pd
@@ -21,7 +21,7 @@ def run_backtest(feats: dict[str, pd.DataFrame], bench: pd.DataFrame, cfg: dict,
         days = days[days <= pd.Timestamp(end)]
     mkt = market_ok(bench)
 
-    # 预先对齐成宽表，避免每天遍历全部股票
+    # Pre-align wide panels so each day does not loop over every ticker
     tickers = list(feats)
     close_px = pd.DataFrame({t: feats[t]["close"] for t in tickers}).reindex(days).ffill()
     cand = pd.DataFrame({t: feats[t]["candidate"] for t in tickers}).reindex(days).fillna(False).astype(bool)
@@ -47,7 +47,7 @@ def run_backtest(feats: dict[str, pd.DataFrame], bench: pd.DataFrame, cfg: dict,
         })
 
     for day in days:
-        # 1) 昨日收盘后挂的限价单
+        # 1) Limit orders placed after yesterday's close
         for order in pending:
             df = feats[order.ticker]
             if day not in df.index or order.ticker in positions:
@@ -71,7 +71,7 @@ def run_backtest(feats: dict[str, pd.DataFrame], bench: pd.DataFrame, cfg: dict,
                 pos.meta["new_today"] = True
         pending = []
 
-        # 2) 已有持仓出场
+        # 2) Exits for existing positions
         for t in list(positions):
             pos = positions[t]
             if pos.meta.pop("new_today", False):
@@ -88,13 +88,13 @@ def run_backtest(feats: dict[str, pd.DataFrame], bench: pd.DataFrame, cfg: dict,
             else:
                 update_trailing(pos, bar, cfg)
 
-        # 3) 收盘估值
+        # 3) Mark to market at the close
         closes = close_px.loc[day]
         equity = cash + sum(p.shares * (closes[t] if pd.notna(closes[t]) else p.entry)
                             for t, p in positions.items())
         equity_curve[day] = equity
 
-        # 4) 生成明日挂单
+        # 4) Generate orders for tomorrow
         if use_mkt and not bool(mkt.get(day, False)):
             continue
         slots = rc["max_positions"] - len(positions)
@@ -112,7 +112,7 @@ def run_backtest(feats: dict[str, pd.DataFrame], bench: pd.DataFrame, cfg: dict,
                 pending.append(plan)
                 slots -= 1
 
-    # 回测结束时按最后收盘价平掉剩余持仓
+    # Close remaining positions at the last close
     if len(days):
         last = close_px.iloc[-1]
         for t, pos in list(positions.items()):

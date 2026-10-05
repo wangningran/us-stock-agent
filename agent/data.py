@@ -1,4 +1,4 @@
-"""数据层：日线行情 + 分析师评级/目标价变动（免费源 yfinance），带本地 CSV 缓存。"""
+"""Data layer: daily prices and analyst rating / price-target changes from yfinance, with a local CSV cache."""
 from __future__ import annotations
 
 import json
@@ -28,7 +28,7 @@ def _fresh(path: Path, max_age_hours: float) -> bool:
 
 def get_prices(ticker: str, start: str, cache_dir: str = "data",
                max_age_hours: float = 6) -> pd.DataFrame:
-    """复权日线 OHLCV，索引为日期。"""
+    """Split/dividend-adjusted daily OHLCV indexed by date."""
     path = _cache_path(cache_dir, "px", ticker)
     if _fresh(path, max_age_hours):
         return pd.read_csv(path, index_col=0, parse_dates=True)
@@ -45,10 +45,10 @@ def get_prices(ticker: str, start: str, cache_dir: str = "data",
 
 def get_analyst_events(ticker: str, cache_dir: str = "data",
                        max_age_hours: float = 6) -> pd.DataFrame:
-    """分析师评级/目标价变动。索引为事件时间戳。
+    """Analyst rating / price-target changes, indexed by event timestamp.
 
     action: up / down / init / main / reit
-    pt_action: Raises / Lowers / Maintains / Announces（部分记录为空）
+    pt_action: Raises / Lowers / Maintains / Announces (sometimes empty)
     """
     path = _cache_path(cache_dir, "analyst", ticker)
     if _fresh(path, max_age_hours):
@@ -91,15 +91,15 @@ def _missing_registry(cache_dir: str) -> tuple[Path, dict]:
 def _fetch_one(t: str, start: str, cache: str):
     try:
         return t, get_prices(t, start, cache), get_analyst_events(t, cache)
-    except Exception:  # noqa: BLE001 - 已退市/无数据的股票直接跳过
+    except Exception:  # noqa: BLE001 - delisted / no-data tickers are skipped
         return t, None, None
 
 
 def load_universe(cfg: dict):
-    """返回 (prices, events, benchmark, members)。
+    """Return (prices, events, benchmark, members).
 
-    universe_mode = "sp500_pit"：历史标普 500 成分股，members 为 [日期 × 代码] 的成分股矩阵；
-    universe_mode = "list"：使用 config 中的 universe 列表，members 为 None。
+    universe_mode = "sp500_pit": historical S&P 500 members; members is a [date x ticker] membership matrix.
+    universe_mode = "list": the `universe` list from config; members is None.
     """
     start, cache = cfg["data"]["start"], cfg["data"]["cache_dir"]
     mode = cfg.get("universe_mode", "list")
@@ -125,7 +125,7 @@ def load_universe(cfg: dict):
             else:
                 prices[t], events[t] = px, ev
     reg_path.write_text(json.dumps(missing))
-    print(f"[data] {len(prices)}/{len(tickers)} 只股票有数据（缺失 {len(tickers) - len(prices)}，多为已退市/更名）")
+    print(f"[data] {len(prices)}/{len(tickers)} tickers have data ({len(tickers) - len(prices)} missing, mostly delisted/renamed)")
 
     bench = get_prices(cfg["benchmark"], start, cache)
     members = None

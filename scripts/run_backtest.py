@@ -1,8 +1,8 @@
-"""回测入口。
+"""Backtest entry point for the legacy v1 analyst + momentum strategy.
 
-  python scripts/run_backtest.py                  # 真实数据（需能访问 Yahoo Finance）
-  python scripts/run_backtest.py --synthetic      # 合成数据，离线验证流程
-  python scripts/run_backtest.py --split 2024-01-01   # 覆盖 config 中的样本外起点
+  python scripts/run_backtest.py                      # real data (needs Yahoo Finance access)
+  python scripts/run_backtest.py --synthetic          # synthetic data, offline pipeline check
+  python scripts/run_backtest.py --split 2024-01-01   # override the out-of-sample start in config
 """
 import argparse
 import sys
@@ -22,7 +22,7 @@ def main():
     ap.add_argument("--synthetic", action="store_true")
     ap.add_argument("--start")
     ap.add_argument("--end")
-    ap.add_argument("--split", help="样本外起始日，分别输出样本内/外结果")
+    ap.add_argument("--split", help="out-of-sample start date; reports in-sample and out-of-sample separately")
     args = ap.parse_args()
 
     cfg = load_config(args.config)
@@ -30,7 +30,7 @@ def main():
         from agent.synthetic import make_universe
         prices, events, bench = make_universe()
         members = None
-        print("⚠️  合成数据，仅用于验证流程，数字没有任何意义\n")
+        print("⚠️  synthetic data - pipeline check only, the numbers mean nothing\n")
     else:
         from agent.data import load_universe
         prices, events, bench, members = load_universe(cfg)
@@ -39,21 +39,21 @@ def main():
     bt = cfg.get("backtest", {})
     start = args.start or (None if args.synthetic else bt.get("start"))
     split = args.split or (None if args.synthetic else bt.get("split"))
-    periods = [("全部", start, args.end)]
+    periods = [("all", start, args.end)]
     if split:
-        periods = [("样本内", start, split), ("样本外", split, args.end)]
+        periods = [("in_sample", start, split), ("out_of_sample", split, args.end)]
 
     for name, s, e in periods:
         trades, equity = run_backtest(feats, bench, cfg, start=s, end=e)
         if trades.empty:
-            print(f"===== {name}：无交易 =====\n")
+            print(f"===== {name}: no trades =====\n")
             continue
         print(f"===== {name}  {equity.index[0]:%Y-%m-%d} ~ {equity.index[-1]:%Y-%m-%d} =====")
         print(format_summary(summarize(trades, equity, bench)))
         print()
         out = ROOT / "reports" / f"trades_{name}.csv"
         trades.to_csv(out, index=False)
-        print(f"交易明细：{out}\n")
+        print(f"Trades: {out}\n")
 
 
 if __name__ == "__main__":

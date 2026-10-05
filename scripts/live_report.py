@@ -16,7 +16,7 @@ import pandas as pd  # noqa: E402
 
 from agent.config import ROOT, load_config  # noqa: E402
 from agent.data import get_prices, load_universe  # noqa: E402
-from agent.live_rsi2 import STATE_DIR, default_account, load_state, run_live, save_state  # noqa: E402
+from agent.live_rsi2 import POS_COLS, STATE_DIR, TRADE_COLS, default_account, load_state, run_live, save_state  # noqa: E402
 
 
 def main():
@@ -34,9 +34,7 @@ def main():
         if (state_dir / "account.json").exists():
             sys.exit(f"{state_dir}/account.json 已存在，如需重置请先手动删除")
         save_state(default_account(args.strategy_capital, args.spy_budget),
-                   pd.DataFrame(columns=["ticker", "entry_date", "entry", "shares", "stop", "provisional"]),
-                   pd.DataFrame(columns=["ticker", "entry_date", "entry", "exit_date", "exit", "shares", "pnl",
-                                         "ret", "reason", "provisional"]), state_dir)
+                   pd.DataFrame(columns=POS_COLS), pd.DataFrame(columns=TRADE_COLS), state_dir)
         print(f"已初始化模型账户：策略 ${args.strategy_capital:,.0f}，SPY 预算 ${args.spy_budget:,.0f}")
         return
 
@@ -59,7 +57,11 @@ def main():
     core = get_prices(core_t, cfg["data"]["start"], cfg["data"]["cache_dir"])
     if args.today:
         core = core[core.index <= today]
-    report, acct, pos, trades = run_live(prices, bench, vix, members, acct, pos, trades, today, core)
+    extras = {}
+    for t in acct.get("extras", []):
+        x = get_prices(t, cfg["data"]["start"], cfg["data"]["cache_dir"])
+        extras[t] = x[x.index <= today] if args.today else x
+    report, acct, pos, trades = run_live(prices, bench, vix, members, acct, pos, trades, today, core, extras)
     print(report)
     if not args.dry_run:
         save_state(acct, pos, trades, state_dir)

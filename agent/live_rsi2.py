@@ -20,8 +20,15 @@ from .config import ROOT
 from .meanrev import add_dollar_volume_rank, build_custom, ext_features, market_context
 
 STATE_DIR = ROOT / "state"
-POS_COLS = ["ticker", "entry_date", "entry", "shares", "stop", "provisional"]
-TRADE_COLS = ["ticker", "entry_date", "entry", "exit_date", "exit", "shares", "pnl", "ret", "reason", "provisional"]
+POS_COLS = ["ticker", "entry_date", "entry", "shares", "stop", "provisional", "confirmed"]
+TRADE_COLS = ["ticker", "entry_date", "entry", "exit_date", "exit", "shares", "pnl", "ret", "reason", "provisional",
+              "confirmed"]
+EXTRA_LABELS = {"IBIT": "比特币 ETF"}
+
+
+def extra_entry_rule(d, m):
+    """比特币等额外标的：经典 RSI(2)，不要求市场压力 / MACD / 成交额排名。"""
+    return (d.close > d.sma200) & (d.rsi2 < 10)
 
 
 # ---------- 策略规则（与 scripts/final_rsi2.py 一致） ----------
@@ -42,7 +49,8 @@ def rank_rule(d, m):
 def default_account(strategy_capital: float, spy_budget: float, tranches: int = 4, weekday: int = 3) -> dict:
     return {
         "strategy_capital": strategy_capital, "cash": strategy_capital,
-        "max_positions": 5, "max_new_per_day": 3, "top_n": 150, "stop_pct": 0.08, "time_stop": 10,
+        "max_positions": 5, "max_new_per_day": 3, "top_n": 150, "extras": ["IBIT"],
+        "stop_pct": 0.08, "time_stop": 10,
         "spy": {"ticker": "SPYM", "budget": spy_budget, "tranches": tranches, "done": 0, "weekday": weekday,
                 "shares": 0, "cost": 0.0, "fills": []},
         "last_run": None,
@@ -54,6 +62,11 @@ def load_state(state_dir: Path = STATE_DIR):
     pos_p, tr_p = state_dir / "positions.csv", state_dir / "trades.csv"
     pos = pd.read_csv(pos_p, parse_dates=["entry_date"]) if pos_p.exists() else pd.DataFrame(columns=POS_COLS)
     trades = pd.read_csv(tr_p, parse_dates=["entry_date", "exit_date"]) if tr_p.exists() else pd.DataFrame(columns=TRADE_COLS)
+    for df in (pos, trades):
+        if "confirmed" not in df:
+            df["confirmed"] = False
+        df["confirmed"] = df["confirmed"].fillna(False).astype(bool)
+        df["provisional"] = df["provisional"].fillna(False).astype(bool)
     return acct, pos, trades
 
 
@@ -90,10 +103,11 @@ def _official_close(feats, t, day):
 
 def run_live(prices: dict[str, pd.DataFrame], bench: pd.DataFrame, vix: pd.DataFrame, members: pd.DataFrame | None,
              acct: dict, pos: pd.DataFrame, trades: pd.DataFrame, today: pd.Timestamp,
-             core: pd.DataFrame | None = None):
+             core: pd.DataFrame | None = None, extras: dict[str, pd.DataFrame] | None = None):
     """返回 (report_markdown, acct, pos, trades)。today 为美东日期（normalize）。
 
     core：核心指数 ETF（默认 SPYM）的行情；None 时用 bench。
+    extras：额外标的（如 IBIT 比特币 ETF）的行情，使用 extra_entry_rule。
     """
     core = bench if core is None else core
     day = bench.index[-1]
@@ -106,6 +120,9 @@ def run_live(prices: dict[str, pd.DataFrame], bench: pd.DataFrame, vix: pd.DataF
     top_n = acct.get("top_n")
     entry = entry_rule if not top_n else (lambda d, m: entry_rule(d, m) & (d.dv_rank <= top_n))
     feats = build_custom(base, mkt, entry, exit_rule, rank_rule, members)
+    for t, px in (extras or {}).items():
+        if len(px) and px.index[-1] == day:
+            feats.update(build_custom({t: ext_features(px)}, mkt, extra_entry_rule, exit_rule, rank_rule, None))
     stop_pct, time_stop, maxp = acct["stop_pct"], acct["time_stop"], acct["max_positions"]
     pos = pos.copy()
     trades = trades.copy()
@@ -113,14 +130,14 @@ def run_live(prices: dict[str, pd.DataFrame], bench: pd.DataFrame, vix: pd.DataF
 
     # 1) 用正式收盘价校正以前的近似成交价
     for i, r in pos.iterrows():
-        if r.provisional and r.entry_date < day:
+        if r.provisional and not r.confirmed and r.entry_date < day:
             px = _official_close(feats, r.ticker, r.entry_date)
             if px:
                 acct["cash"] += (r.entry - px) * r.shares
                 pos.at[i, "entry"], pos.at[i, "stop"] = px, round(px * (1 - stop_pct), 2)
             pos.at[i, "provisional"] = False
     for i, r in trades.iterrows():
-        if r.provisional and r.exit_date < day:
+        if r.provisional and not r.confirmed and r.exit_date < day:
             if r.reason != "stop":
                 px = _official_close(feats, r.ticker, r.exit_date)
                 if px:
@@ -165,7 +182,8 @@ def run_live(prices: dict[str, pd.DataFrame], bench: pd.DataFrame, vix: pd.DataF
             trades = pd.concat([trades, pd.DataFrame([{
                 "ticker": r.ticker, "entry_date": r.entry_date, "entry": r.entry, "exit_date": day,
                 "exit": round(exit_px, 2), "shares": r.shares, "pnl": round((exit_px - r.entry) * r.shares, 2),
-                "ret": round(exit_px / r.entry - 1, 4), "reason": reason, "provisional": prov}])], ignore_index=True)
+                "ret": round(exit_px / r.entry - 1, 4), "reason": reason, "provisional": prov,
+                "confirmed": False}])], ignore_index=True)
             if reason == "stop":
                 notes.append(f"{r.ticker} 盘中已跌破止损价 ${r.stop:.2f}，止损单应已成交（如未挂止损单，请立即卖出）")
             else:
@@ -208,10 +226,13 @@ def run_live(prices: dict[str, pd.DataFrame], bench: pd.DataFrame, vix: pd.DataF
         acct["cash"] -= shares * price
         pos = pd.concat([pos, pd.DataFrame([{
             "ticker": t, "entry_date": day, "entry": round(price, 2), "shares": shares,
-            "stop": round(price * (1 - stop_pct), 2), "provisional": True}])], ignore_index=True)
-        orders.append(Order("BUY", t, shares, price,
-                            f"RSI(2)={row.rsi2:.1f}，MACD 柱 {row.macd_hist:+.2f}，200 日线 ${row.sma200:.2f}，"
-                            f"成交额排名第 {int(row.dv_rank)}"))
+            "stop": round(price * (1 - stop_pct), 2), "provisional": True, "confirmed": False}])],
+            ignore_index=True)
+        why = (f"{EXTRA_LABELS.get(t, '额外标的')}，RSI(2)={row.rsi2:.1f}，200 日线 ${row.sma200:.2f}"
+               if t in (extras or {}) else
+               f"RSI(2)={row.rsi2:.1f}，MACD 柱 {row.macd_hist:+.2f}，200 日线 ${row.sma200:.2f}，"
+               f"成交额排名第 {int(row.dv_rank)}")
+        orders.append(Order("BUY", t, shares, price, why))
         slots -= 1
 
     # 5) SPY 分批建仓
@@ -262,7 +283,8 @@ def _name(ticker: str) -> str:
 def _render(day, m, stress, orders, spy_order, holdings, pos, trades, acct, equity, feats, notes, skipped, spy_px):
     L = [f"# 📊 RSI(2) 策略 · {day:%Y-%m-%d}（模拟盘）", ""]
     L.append(f"市场：VIX **{m.vix:.1f}**，SPY RSI(2) **{m.spy_rsi2:.0f}** → "
-             + ("✅ 市场压力条件满足，可以开新仓" if stress else "⏸ 市场平静（VIX≤20 且 SPY 未超卖），今天不开新仓"))
+             + ("✅ 市场压力条件满足，股票可以开新仓" if stress else
+                "⏸ 市场平静（VIX≤20 且 SPY 未超卖），股票不开新仓（比特币 ETF 不受此限制）"))
     L.append("> 价格为报告生成时的实时价，收盘可能略有不同。请在 **12:50（温哥华时间）前**下单。")
     L.append("")
     L.append("## 一、今日操作")
@@ -296,20 +318,23 @@ def _render(day, m, stress, orders, spy_order, holdings, pos, trades, acct, equi
     if not rows and not new:
         L.append("当前无策略持仓。")
     else:
-        L.append("| 股票 | 股数 | 成本 | 现价 | 浮盈 | 已持有 | 止损价 | 明天卖出线* |")
-        L.append("|---|---|---|---|---|---|---|---|")
+        L.append("| 股票 | 状态 | 股数 | 成本 | 现价 | 浮盈 | 已持有 | 止损价 | 明天卖出线* |")
+        L.append("|---|---|---|---|---|---|---|---|---|")
         for r, px, last4, held, _ in rows:
             df = feats[r.ticker]
             nxt = float(df.close.iloc[-4:].mean())
-            L.append(f"| {r.ticker} | {r.shares} | ${r.entry:.2f} | ${px:.2f} | {px / r.entry - 1:+.1%} | {held} 天 "
+            st = "✅ 已确认" if r.confirmed else "⏳ 未确认"
+            L.append(f"| {r.ticker} | {st} | {r.shares} | ${r.entry:.2f} | ${px:.2f} | {px / r.entry - 1:+.1%} | {held} 天 "
                      f"| ${r.stop:.2f} | ${nxt:.2f} |")
         for o in new:
             df = feats[o.ticker]
             nxt = float(df.close.iloc[-4:].mean())
-            L.append(f"| {o.ticker}（今日买入） | {o.shares} | ${o.ref_price:.2f} | — | — | 0 天 "
+            L.append(f"| {o.ticker}（今日买入） | ⏳ 未确认 | {o.shares} | ${o.ref_price:.2f} | — | — | 0 天 "
                      f"| ${o.ref_price * (1 - acct['stop_pct']):.2f} | ${nxt:.2f} |")
         L.append("")
         L.append("\\* 明天收盘价高于「卖出线」就卖出（等于收盘价站上 5 日线）。最多持有 10 个交易日。")
+        if any(not r.confirmed for r, *_ in rows) or new:
+            L.append("⏳ 未确认 = 按收盘价假设已成交。成交后请告诉我实际股数和价格（没买也告诉我），之后按实际记录计算。")
     L.append("")
 
     spy = acct["spy"]

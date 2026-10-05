@@ -83,7 +83,10 @@
 - **股票池**：标普 500 成分股中，过去 60 天平均成交额**前 150 名**（市值/知名度的替代指标，无前视偏差）
 - **规则**：上面的 RSI(2) 最终规则；最多持有 **5 只**，每只约 20% 资金；**每天最多新买 3 只**（RSI(2) 最低的优先）
 - 回测（零佣金、US$5,260、整股）：2019–24 年化 +9.9%、回撤 −13.6%；2025–26 年化 +11.3%、回撤 −5.2%，胜率约 70%
+- **比特币**：IBIT（贝莱德比特币现货 ETF）作为额外候选，规则为经典 RSI(2)：收盘 > 200 日线且 RSI(2) < 10，不要求市场压力/MACD；与股票共用 5 个仓位
+  - 回测（BTC 现货价格按比例模拟 IBIT）：加入后 2025–26 年化 +11.3% → +12.7%，但 2019–24 年化 +9.9% → +9.5%、回撤 −13.6% → −15.1%
 - **出场**：买入后挂 8% GTC 止损；收盘价高于 5 日线卖出；最多持有 10 天
+- **实际成交记录**：报告推荐的买卖先记为「⏳ 未确认」（按收盘价假设成交）；用户告知实际成交后用 `scripts/record_trade.py` 改为「✅ 已确认」，之后的卖出建议、止损价和盈亏都基于实际记录
 - **模型账户**：假设完全按报告执行，状态保存在 `state/`，次日用正式收盘价校正；报告存档在 `reports/live/`
 - 推送示例：[`docs/sample_report_buy.md`](docs/sample_report_buy.md)、[`docs/sample_report_sell.md`](docs/sample_report_sell.md)
 
@@ -91,6 +94,11 @@
 python scripts/live_report.py --init --strategy-capital 5260 --spy-budget 0   # 初始化（已完成）
 python scripts/live_report.py --dry-run                 # 预览今日报告，不改状态
 python scripts/live_report.py --today 2026-10-02 --dry-run --state-dir /tmp/x   # 历史回放
+python scripts/record_trade.py buy MA 2 525.30      # 确认买入（实际股数、价格）
+python scripts/record_trade.py nobuy MA             # 推荐了但没买
+python scripts/record_trade.py sell MA 2 540.00     # 确认卖出
+python scripts/record_trade.py nosell MA            # 建议卖出但没卖
+python scripts/record_trade.py show                 # 查看持仓
 ```
 
 ## 使用

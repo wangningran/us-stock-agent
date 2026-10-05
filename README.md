@@ -79,7 +79,7 @@
 
 `scripts/live_report.py` 每个交易日温哥华时间约 12:15 运行（收盘前约 45 分钟），用实时价近似收盘价：
 
-- **资金**：模型账户 US$5,260（约 7500 加币）全部用于 RSI(2) 策略
+- **资金**：模型账户 US$7,500，全部用于 RSI(2) 策略（2026-10-05 起，空仓开始）
 - **股票池**：标普 500 成分股中，过去 60 天平均成交额**前 150 名**（市值/知名度的替代指标，无前视偏差）
 - **规则**：上面的 RSI(2) 最终规则；最多持有 **5 只**，每只约 20% 资金；**每天最多新买 3 只**（RSI(2) 最低的优先）
 - 回测（零佣金、US$5,260、整股）：2019–24 年化 +9.9%、回撤 −13.6%；2025–26 年化 +11.3%、回撤 −5.2%，胜率约 70%
@@ -91,7 +91,7 @@
 - 推送示例：[`docs/sample_report_buy.md`](docs/sample_report_buy.md)、[`docs/sample_report_sell.md`](docs/sample_report_sell.md)
 
 ```bash
-python scripts/live_report.py --init --strategy-capital 5260 --spy-budget 0   # 初始化（已完成）
+python scripts/live_report.py --init --strategy-capital 7500 --spy-budget 0   # 初始化（已完成）
 python scripts/live_report.py --dry-run                 # 预览今日报告，不改状态
 python scripts/live_report.py --today 2026-10-02 --dry-run --state-dir /tmp/x   # 历史回放
 python scripts/record_trade.py buy MA 2 525.30      # 确认买入（实际股数、价格）

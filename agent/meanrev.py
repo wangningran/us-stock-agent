@@ -259,3 +259,17 @@ def build_custom(base: dict[str, pd.DataFrame], mkt: pd.DataFrame, entry, exit_,
         d["rank"] = rank(d, m)
         out[t] = d
     return out
+
+
+def add_dollar_volume_rank(base: dict[str, pd.DataFrame], index: pd.DatetimeIndex,
+                           members: pd.DataFrame | None = None, window: int = 60) -> None:
+    """按过去 window 天平均成交额（价格 × 成交量）在当日成分股中横向排名，写入 base[t]["dv_rank"]（1 = 最大）。
+
+    作为"市值/知名度"的替代：只用当时已知的数据，没有前视偏差。
+    """
+    dv = pd.DataFrame({t: (d.close * d.volume).rolling(window).mean() for t, d in base.items()}).reindex(index)
+    if members is not None:
+        dv = dv.where(members.reindex(index=index, columns=dv.columns).fillna(False).astype(bool))
+    rank = dv.rank(axis=1, ascending=False)
+    for t in base:
+        base[t]["dv_rank"] = rank[t].reindex(base[t].index)

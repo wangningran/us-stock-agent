@@ -17,7 +17,7 @@ from pathlib import Path
 import pandas as pd
 
 from .config import ROOT
-from .meanrev import build_custom, ext_features, market_context
+from .meanrev import add_dollar_volume_rank, build_custom, ext_features, market_context
 
 STATE_DIR = ROOT / "state"
 POS_COLS = ["ticker", "entry_date", "entry", "shares", "stop", "provisional"]
@@ -42,7 +42,7 @@ def rank_rule(d, m):
 def default_account(strategy_capital: float, spy_budget: float, tranches: int = 4, weekday: int = 3) -> dict:
     return {
         "strategy_capital": strategy_capital, "cash": strategy_capital,
-        "max_positions": 10, "max_new_per_day": 3, "stop_pct": 0.08, "time_stop": 10,
+        "max_positions": 5, "max_new_per_day": 3, "top_n": 150, "stop_pct": 0.08, "time_stop": 10,
         "spy": {"ticker": "SPYM", "budget": spy_budget, "tranches": tranches, "done": 0, "weekday": weekday,
                 "shares": 0, "cost": 0.0, "fills": []},
         "last_run": None,
@@ -102,7 +102,10 @@ def run_live(prices: dict[str, pd.DataFrame], bench: pd.DataFrame, vix: pd.DataF
 
     mkt = market_context(bench, vix)
     base = {t: ext_features(p) for t, p in prices.items()}
-    feats = build_custom(base, mkt, entry_rule, exit_rule, rank_rule, members)
+    add_dollar_volume_rank(base, bench.index, members)
+    top_n = acct.get("top_n")
+    entry = entry_rule if not top_n else (lambda d, m: entry_rule(d, m) & (d.dv_rank <= top_n))
+    feats = build_custom(base, mkt, entry, exit_rule, rank_rule, members)
     stop_pct, time_stop, maxp = acct["stop_pct"], acct["time_stop"], acct["max_positions"]
     pos = pos.copy()
     trades = trades.copy()
@@ -207,7 +210,8 @@ def run_live(prices: dict[str, pd.DataFrame], bench: pd.DataFrame, vix: pd.DataF
             "ticker": t, "entry_date": day, "entry": round(price, 2), "shares": shares,
             "stop": round(price * (1 - stop_pct), 2), "provisional": True}])], ignore_index=True)
         orders.append(Order("BUY", t, shares, price,
-                            f"RSI(2)={row.rsi2:.1f}，MACD 柱 {row.macd_hist:+.2f}，200 日线 ${row.sma200:.2f}"))
+                            f"RSI(2)={row.rsi2:.1f}，MACD 柱 {row.macd_hist:+.2f}，200 日线 ${row.sma200:.2f}，"
+                            f"成交额排名第 {int(row.dv_rank)}"))
         slots -= 1
 
     # 5) SPY 分批建仓
@@ -240,6 +244,21 @@ def run_live(prices: dict[str, pd.DataFrame], bench: pd.DataFrame, vix: pd.DataF
     return report, acct, pos, trades
 
 
+_NAMES: dict[str, str] = {}
+
+
+def _name(ticker: str) -> str:
+    """公司名（yfinance），取不到就返回空。"""
+    if ticker not in _NAMES:
+        try:
+            import yfinance as yf
+            info = yf.Ticker(ticker).info
+            _NAMES[ticker] = info.get("shortName") or info.get("longName") or ""
+        except Exception:  # noqa: BLE001
+            _NAMES[ticker] = ""
+    return f"（{_NAMES[ticker]}）" if _NAMES[ticker] else ""
+
+
 def _render(day, m, stress, orders, spy_order, holdings, pos, trades, acct, equity, feats, notes, skipped, spy_px):
     L = [f"# 📊 RSI(2) 策略 · {day:%Y-%m-%d}（模拟盘）", ""]
     L.append(f"市场：VIX **{m.vix:.1f}**，SPY RSI(2) **{m.spy_rsi2:.0f}** → "
@@ -254,13 +273,13 @@ def _render(day, m, stress, orders, spy_order, holdings, pos, trades, acct, equi
         L.append("今天无需操作。")
     for i, o in enumerate(todo, 1):
         if o.side == "SELL":
-            L.append(f"{i}. 🔴 **卖出 {o.ticker} {o.shares} 股**，参考价 ${o.ref_price:.2f}，收盘市价单（MOC）。{o.note}")
+            L.append(f"{i}. 🔴 **卖出 {o.ticker}{_name(o.ticker)} {o.shares} 股**，参考价 ${o.ref_price:.2f}，收盘市价单（MOC）。{o.note}")
         elif o.ticker == acct["spy"].get("ticker", "SPY"):
             L.append(f"{i}. 🟢 **买入 SPY {o.shares} 股**，参考价 ${o.ref_price:.2f}（约 ${o.shares * o.ref_price:,.0f}）。"
                      f"{o.note}，长期持有，不设止损")
         else:
             stop = o.ref_price * (1 - acct['stop_pct'])
-            L.append(f"{i}. 🟢 **买入 {o.ticker} {o.shares} 股**，参考价 ${o.ref_price:.2f}（约 ${o.shares * o.ref_price:,.0f}），"
+            L.append(f"{i}. 🟢 **买入 {o.ticker}{_name(o.ticker)} {o.shares} 股**，参考价 ${o.ref_price:.2f}（约 ${o.shares * o.ref_price:,.0f}），"
                      f"收盘市价单（MOC），或限价 ${o.ref_price * 1.003:.2f}")
             L.append(f"   - 成交后挂 **GTC 止损单 ≈ ${stop:.2f}**（成交价 × 0.92）")
             L.append(f"   - 止盈：无固定价格，收盘价高于 5 日线就卖，报告每天会给出具体卖出价")

@@ -1,7 +1,7 @@
 {
   "strategy_capital": 5260.0,
   "cash": 5260.0,
-  "max_positions": 10,
+  "max_positions": 5,
   "stop_pct": 0.08,
   "time_stop": 10,
   "spy": {
@@ -15,5 +15,6 @@
     "fills": []
   },
   "last_run": null,
-  "max_new_per_day": 3
+  "max_new_per_day": 3,
+  "top_n": 150
 }

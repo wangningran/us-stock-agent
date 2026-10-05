@@ -7,7 +7,7 @@ reports/*.md
 reports/*.csv
 !reports/.gitkeep
 !data/.gitkeep
-positions.csv
+/positions.csv
 .env
 data/ref/
 data/missing.json

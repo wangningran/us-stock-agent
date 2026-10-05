@@ -1,18 +1,19 @@
 {
-  "strategy_capital": 2630.0,
-  "cash": 2630.0,
+  "strategy_capital": 5260.0,
+  "cash": 5260.0,
   "max_positions": 10,
   "stop_pct": 0.08,
   "time_stop": 10,
   "spy": {
     "ticker": "SPYM",
-    "budget": 2630.0,
-    "tranches": 4,
+    "budget": 0.0,
+    "tranches": 0,
     "done": 0,
     "weekday": 3,
     "shares": 0,
     "cost": 0.0,
     "fills": []
   },
-  "last_run": null
+  "last_run": null,
+  "max_new_per_day": 3
 }

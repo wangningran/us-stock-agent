@@ -42,7 +42,7 @@ def rank_rule(d, m):
 def default_account(strategy_capital: float, spy_budget: float, tranches: int = 4, weekday: int = 3) -> dict:
     return {
         "strategy_capital": strategy_capital, "cash": strategy_capital,
-        "max_positions": 10, "stop_pct": 0.08, "time_stop": 10,
+        "max_positions": 10, "max_new_per_day": 3, "stop_pct": 0.08, "time_stop": 10,
         "spy": {"ticker": "SPYM", "budget": spy_budget, "tranches": tranches, "done": 0, "weekday": weekday,
                 "shares": 0, "cost": 0.0, "fills": []},
         "last_run": None,
@@ -184,11 +184,15 @@ def run_live(prices: dict[str, pd.DataFrame], bench: pd.DataFrame, vix: pd.DataF
     m_today = mkt.loc[day]
     stress = bool((m_today.vix > 20) or (m_today.spy_rsi2 < 30))
     slots = maxp - len(pos)
+    max_new = acct.get("max_new_per_day")
+    if max_new:
+        slots = min(slots, max_new)
     per_slot = equity / maxp
     held_set = set(pos.ticker) | {o.ticker for o in orders}
     cands = [(t, df.loc[day]) for t, df in feats.items()
              if day in df.index and bool(df.at[day, "entry"]) and t not in held_set]
     cands.sort(key=lambda x: x[1]["rsi2"])
+    n_cands = len(cands)
     skipped = []
     for t, row in cands:
         if slots <= 0:
@@ -228,6 +232,9 @@ def run_live(prices: dict[str, pd.DataFrame], bench: pd.DataFrame, vix: pd.DataF
             spy["done"] += 1
 
     acct["last_run"] = str(day.date())
+    if n_cands > len([o for o in orders if o.side == "BUY"]):
+        notes.append(f"今日共 {n_cands} 只符合条件，按 RSI(2) 最低（最超卖）选出前 "
+                     f"{len([o for o in orders if o.side == 'BUY'])} 只")
     report = _render(day, m_today, stress, orders, spy_order, holdings, pos, trades, acct, equity,
                      feats, notes, skipped, spy_px)
     return report, acct, pos, trades
@@ -291,7 +298,9 @@ def _render(day, m, stress, orders, spy_order, holdings, pos, trades, acct, equi
     L.append("## 三、模型账户")
     L.append(f"- 策略部分：权益约 **${strat_val:,.0f}**（初始 ${acct['strategy_capital']:,.0f}，"
              f"{strat_val / acct['strategy_capital'] - 1:+.1%}），现金 ${acct['cash']:,.0f}，持仓 {len(pos)} 只")
-    if spy["shares"]:
+    if spy["budget"] <= 0:
+        pass
+    elif spy["shares"]:
         val = spy["shares"] * spy_px
         L.append(f"- 指数部分（{spy.get('ticker', 'SPY')}）：{spy['shares']} 股，成本 ${spy['cost']:,.0f}，市值约 ${val:,.0f}"
                  f"（{val / spy['cost'] - 1:+.1%}），建仓进度 {spy['done']}/{spy['tranches']}")

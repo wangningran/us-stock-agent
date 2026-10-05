@@ -79,12 +79,14 @@
 
 `scripts/live_report.py` 每个交易日温哥华时间约 12:15 运行（收盘前约 45 分钟），用实时价近似收盘价：
 
-- **策略部分**：上面的 RSI(2) 最终规则，最多 10 只等权；买入后挂 8% GTC 止损；收盘价高于 5 日线卖出；最多持有 10 天
-- **指数部分**：SPYM（标普 500 ETF，每股约 $90），每周四分批买入，共 4 批
+- **资金**：模型账户 US$5,260（约 7500 加币）全部用于 RSI(2) 策略
+- **规则**：上面的 RSI(2) 最终规则；最多持有 10 只，每只约 1/10 资金；**每天最多新买 3 只**（RSI(2) 最低的优先）
+- **出场**：买入后挂 8% GTC 止损；收盘价高于 5 日线卖出；最多持有 10 天
 - **模型账户**：假设完全按报告执行，状态保存在 `state/`，次日用正式收盘价校正；报告存档在 `reports/live/`
+- 推送示例：[`docs/sample_report_buy.md`](docs/sample_report_buy.md)、[`docs/sample_report_sell.md`](docs/sample_report_sell.md)
 
 ```bash
-python scripts/live_report.py --init --strategy-capital 2630 --spy-budget 2630   # 初始化（已完成）
+python scripts/live_report.py --init --strategy-capital 5260 --spy-budget 0   # 初始化（已完成）
 python scripts/live_report.py --dry-run                 # 预览今日报告，不改状态
 python scripts/live_report.py --today 2026-10-02 --dry-run --state-dir /tmp/x   # 历史回放
 ```

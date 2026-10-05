@@ -87,7 +87,7 @@ def build_mr(prices: dict[str, pd.DataFrame], rule: str, members: pd.DataFrame |
 def run_mr_backtest(feats: dict[str, pd.DataFrame], bench: pd.DataFrame, *, mode: str = "close",
                     max_positions: int = 10, time_stop: int = 10, stop_pct: float | None = None,
                     slippage_bps: float = 5, commission: float = 1.0, equity0: float = 100_000,
-                    market_filter: bool = False, start=None, end=None):
+                    market_filter: bool = False, start=None, end=None, max_new_per_day: int | None = None):
     """信号式回测。等权：每笔 = 权益 / max_positions。"""
     days = bench.index
     if start:
@@ -167,6 +167,8 @@ def run_mr_backtest(feats: dict[str, pd.DataFrame], bench: pd.DataFrame, *, mode
         cands = ENTRY.columns[ENTRY.loc[day].values]
         cands = [t for t in cands if t not in pos]
         cands.sort(key=lambda t: (pd.isna(P["rank"].at[day, t]), P["rank"].at[day, t]))
+        if max_new_per_day:
+            slots = min(slots, max_new_per_day)
         for t in cands[:slots]:
             if mode == "close":
                 buy(t, c[t], day, equity)

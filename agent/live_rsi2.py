@@ -14,6 +14,7 @@ import math
 from dataclasses import dataclass
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 
 from .config import ROOT
@@ -266,6 +267,30 @@ def run_live(prices: dict[str, pd.DataFrame], bench: pd.DataFrame, vix: pd.DataF
 
 
 _NAMES: dict[str, str] = {}
+_EARN: dict[str, object] = {}
+EARNINGS_WARN_DAYS = 10   # 与时间止损一致：预计持有期内
+
+
+def _next_earnings(ticker: str, day: pd.Timestamp):
+    """下一个财报日（yfinance calendar），取不到返回 None。"""
+    if ticker not in _EARN:
+        try:
+            import yfinance as yf
+            dates = (yf.Ticker(ticker).calendar or {}).get("Earnings Date") or []
+            future = sorted(d for d in dates if pd.Timestamp(d) >= day)
+            _EARN[ticker] = pd.Timestamp(future[0]) if future else None
+        except Exception:  # noqa: BLE001
+            _EARN[ticker] = None
+    return _EARN[ticker]
+
+
+def _earnings_text(ticker: str, day: pd.Timestamp) -> tuple[str, bool]:
+    """返回（说明文字, 是否在预计持有期内）。"""
+    ed = _next_earnings(ticker, day)
+    if ed is None:
+        return "", False
+    n = int(np.busday_count(day.date(), ed.date()))
+    return f"{ed:%m-%d}（{n} 个交易日后）", n <= EARNINGS_WARN_DAYS
 
 
 def _name(ticker: str) -> str:
@@ -306,6 +331,11 @@ def _render(day, m, stress, orders, spy_order, holdings, pos, trades, acct, equi
             L.append(f"   - 成交后挂 **GTC 止损单 ≈ ${stop:.2f}**（成交价 × 0.92）")
             L.append(f"   - 止盈：无固定价格，收盘价高于 5 日线就卖，报告每天会给出具体卖出价")
             L.append(f"   - 依据：{o.note}")
+            et, soon = _earnings_text(o.ticker, day)
+            if soon:
+                L.append(f"   - ⚠️ **财报 {et}**，在预计持有期内，财报后容易跳空，可考虑放弃或减半")
+            elif et:
+                L.append(f"   - 📅 下次财报 {et}")
     for n in notes:
         L.append(f"- ⚠️ {n}")
     if skipped:
@@ -333,6 +363,13 @@ def _render(day, m, stress, orders, spy_order, holdings, pos, trades, acct, equi
                      f"| ${o.ref_price * (1 - acct['stop_pct']):.2f} | ${nxt:.2f} |")
         L.append("")
         L.append("\\* 明天收盘价高于「卖出线」就卖出（等于收盘价站上 5 日线）。最多持有 10 个交易日。")
+        warns = []
+        for t in [r.ticker for r, *_ in rows]:
+            et, soon = _earnings_text(t, day)
+            if soon:
+                warns.append(f"{t} {et}")
+        if warns:
+            L.append(f"📅 **持仓财报提醒**：{'；'.join(warns)}。财报前后容易跳空，8% 止损可能挡不住，可考虑财报前卖出")
         if any(not r.confirmed for r, *_ in rows) or new:
             L.append("⏳ 未确认 = 按收盘价假设已成交。成交后请告诉我实际股数和价格（没买也告诉我），之后按实际记录计算。")
     L.append("")

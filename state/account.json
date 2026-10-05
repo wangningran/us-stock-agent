@@ -1,6 +1,6 @@
 {
-  "strategy_capital": 7500.0,
-  "cash": 7500.0,
+  "strategy_capital": 5260.0,
+  "cash": 5260.0,
   "max_positions": 5,
   "stop_pct": 0.08,
   "time_stop": 10,
@@ -19,5 +19,6 @@
   "top_n": 150,
   "extras": [
     "IBIT"
-  ]
+  ],
+  "capital_note": "7500 CAD ≈ 5260 USD (CADUSD 0.7013, 2026-10-04)"
 }

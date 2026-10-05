@@ -14,7 +14,7 @@
     "cost": 0.0,
     "fills": []
   },
-  "last_run": null,
+  "last_run": "2026-10-05",
   "max_new_per_day": 3,
   "top_n": 150,
   "extras": [

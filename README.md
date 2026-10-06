@@ -106,6 +106,13 @@ All tests use the point-in-time S&P 500, train 2019–2024 and test 2025-01 onwa
    time stops and tighter stops did not help consistently. A 10% stop or no stop scored slightly better, but the
    8% stop was kept to cap single-trade losses (no-stop worst trade: −25%).
 
+6. **Breakout (research only, not live).** `agent/breakout.py`, `scripts/research_breakout.py`: Bollinger squeeze +
+   rising 50-day SMA + contracting range with higher lows + drying volume + near the base high + stronger than SPY,
+   then a close above the prior 20-day high on >= 1.2x volume. Best stable variant (breakout-day-low stop, exit below
+   the 20-day SMA, top 150): 2019-24 8.8% CAGR / -9.2% max DD / 31% win rate / payoff 3.7; 2025-26 7.5% / -12.8%.
+   Plain 20-day breakouts without the setup lost money in 2019-24 and only worked in 2025-26. Daily returns are
+   almost uncorrelated with RSI(2) (0.14); a 50/50 mix had a lower drawdown than either alone, but both trail SPY.
+
 ## Limitations
 
 - Yahoo has no prices for delisted / renamed tickers; ~85% of the 694 S&P 500 members since 2018 have data. The

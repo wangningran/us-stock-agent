@@ -12,6 +12,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+from .breakout import bo_features
 from .meanrev import wilder_rsi
 
 INDEX = {"SPY": "标普500", "QQQ": "纳指100", "IWM": "罗素2000", "DIA": "道指"}
@@ -274,16 +275,62 @@ def build_close(today: pd.Timestamp, members: list[str]) -> str:
                  + ("，✅ 满足买入条件" if r2 < 10 and d.close.iloc[-1] > d.close.rolling(200).mean().iloc[-1] else ""))
     L.append("")
 
+    L += _breakout_section(daily, st, extras, day, meta)
+
     # earnings next trading day
     top = st.nsmallest(200, "dv_rank").ticker.tolist()
     nxt = pd.bdate_range(day + pd.Timedelta(days=1), periods=1)[0]
     ed = earnings_dates(top)
     tom = [t for t, ds in ed.items() if any(x.normalize() == nxt for x in ds)]
-    L.append(f"## 六、下一交易日（{nxt:%m-%d}）财报")
+    L.append(f"## 七、下一交易日（{nxt:%m-%d}）财报")
     L.append("、".join(f"{t}（{_short(meta.get(t, {}).get('name', t), 16)}）" for t in tom) if tom else "成交额前 200 的公司中没有。")
     L.append("")
     L.append("> 数据来自 Yahoo Finance 收盘数据，仅供研究参考，不构成投资建议。")
     return "\n".join(L)
+
+
+def _breakout_section(daily, st, extras, day, meta) -> list[str]:
+    """Breakout watch-list and today's breakout signals (research only, not traded).
+
+    Rules from agent/breakout.py (setup + breakout, stop at the breakout-day low capped at 10%, exit on a close
+    below the 20-day SMA), applied to the top 150 S&P 500 names by dollar volume plus HOT_EXTRA.
+    """
+    spy = daily["SPY"].close
+    spy_ok = bool(spy.iloc[-1] > spy.rolling(200).mean().iloc[-1])
+    names = st[st.dv_rank <= 150].ticker.tolist() + [t for t in extras if t in daily]
+    watch, sig = [], []
+    for t in names:
+        d = daily.get(t)
+        if d is None or d.index[-1] != day or len(d) < 90:
+            continue
+        f = bo_features(d, spy).iloc[-1]
+        name = HOT_EXTRA.get(t) or _short(meta.get(t, {}).get("name", t), 16)
+        hi = float(d.high.iloc[-20:].max())
+        if bool(f["watch"]):
+            watch.append((t, name, f.close, hi, f.close / hi - 1, f.rs63, f.vol_ratio))
+        if bool(f.breakout_raw) and bool(f.setup_recent) and f.vol_ratio >= 1.2:
+            stop = max(float(f.low), f.close * 0.9)
+            sig.append((t, name, f.close, f.base_hi, f.vol_ratio, stop, 1 - stop / f.close))
+    L = ["## 六、突破观察（研究中，仅供参考，不下单）",
+         f"- 大盘过滤：SPY {'在' if spy_ok else '不在'} 200 日线上方" + ("" if spy_ok else "，回测规则下今天不做突破")]
+    if sig:
+        L += ["", "**今日突破信号**（站上前 20 日高点、成交量 ≥ 1.2 倍、此前 5 天内出现在观察名单）",
+              "| 股票 | 公司 | 收盘 | 突破位 | 量比 | 止损（突破日低点） | 风险 |", "|---|---|---|---|---|---|---|"]
+        L += [f"| {t} | {n} | {c:,.2f} | {b:,.2f} | {v:.1f}x | {s:,.2f} | {r:.1%} |" for t, n, c, b, v, s, r in sig]
+        L.append("- 离场：收盘跌破 20 日均线就卖。")
+    else:
+        L.append("- 今日突破信号：无")
+    if watch:
+        watch.sort(key=lambda x: -x[5])
+        L += ["", "**观察名单**（布林带挤压、50 日线上升且站上、振幅收窄低点抬高、缩量、离平台高点 3% 以内、3 个月跑赢 SPY）",
+              "| 股票 | 公司 | 收盘 | 平台高点 | 距离 | 3个月相对SPY | 量比 |", "|---|---|---|---|---|---|---|"]
+        L += [f"| {t} | {n} | {c:,.2f} | {h:,.2f} | {g:+.1%} | {rs:+.1%} | {v:.1f}x |"
+              for t, n, c, h, g, rs, v in watch[:12]]
+    else:
+        L.append("- 观察名单：今天没有股票满足全部条件")
+    L.append("- 回测（2019–2026）：胜率约 31%，盈亏比约 3.4，年化约 8.5%，最大回撤 −12.8%；目前只观察、不下单。")
+    L.append("")
+    return L
 
 
 def build_afterhours(today: pd.Timestamp, members: list[str]) -> str:

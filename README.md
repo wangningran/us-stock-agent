@@ -52,7 +52,8 @@ Sample reports: [`docs/sample_report_buy.md`](docs/sample_report_buy.md),
 
 - `close` (13:08 PT): indices and macro, breadth (advancers / decliners, 52-week highs / lows, % above 200-day),
   sectors with their largest names and best / worst members, S&P 500 movers of 4% or more, a fixed list of heavily
-  traded non-S&P stocks (`HOT_EXTRA`: SpaceX, TSMC, ASML, ...), the RSI(2) watch-list
+  traded non-S&P stocks (`HOT_EXTRA`: SpaceX, TSMC, ASML, ...), the RSI(2) watch-list, the breakout watch-list
+  and breakout signals (information only, not traded; see research item 6)
   and next-day earnings.
 - `after` (17:08 PT): after-hours moves of index and sector ETFs, top-300 stocks and the non-S&P list moving 2% or more after hours,
   and companies reporting earnings that day.

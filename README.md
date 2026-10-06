@@ -43,6 +43,8 @@ sell-offs and bear markets (e.g. 2022: +3% vs SPY −18%) and lags SPY in strong
    filled at the close (shown as ⏳ unconfirmed); reported ones are ✅ confirmed and never overwritten.
 4. State (`state/`) and report archives (`reports/live/`) are committed to the repo after each run.
 
+Signal reference: [`docs/signals.md`](docs/signals.md).
+
 Sample reports: [`docs/sample_report_buy.md`](docs/sample_report_buy.md),
 [`docs/sample_report_sell.md`](docs/sample_report_sell.md).
 

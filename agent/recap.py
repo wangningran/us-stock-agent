@@ -38,6 +38,7 @@ def download_daily(tickers: list[str], period: str = "1y") -> dict[str, pd.DataF
     import yfinance as yf
     _quiet()
     raw = yf.download(tickers, period=period, auto_adjust=True, progress=False, threads=True, group_by="column")
+    _fill_last_bar(raw, tickers)
     out = {}
     for t in tickers:
         try:
@@ -49,6 +50,36 @@ def download_daily(tickers: list[str], period: str = "1y") -> dict[str, pd.DataF
             df.index = pd.to_datetime(df.index).tz_localize(None).normalize()
             out[t] = df
     return out
+
+
+def _fill_last_bar(raw: pd.DataFrame, tickers: list[str]) -> None:
+    """Yahoo sometimes leaves today's daily close empty for hours after the close (open/volume present).
+    Fill open/high/low/close of that last row from today's regular-session 5-minute bars."""
+    import yfinance as yf
+    if not isinstance(raw.columns, pd.MultiIndex) or raw.empty:
+        return
+    last = raw.index[-1]
+    missing = [t for t in tickers if t in raw["Close"] and pd.isna(raw["Close"][t].iloc[-1])
+               and pd.notna(raw["Volume"][t].iloc[-1])]
+    if not missing:
+        return
+    intra = yf.download(missing, period="1d", interval="5m", prepost=False, progress=False, threads=True,
+                        auto_adjust=True, group_by="column")
+    if intra.empty or not isinstance(intra.columns, pd.MultiIndex):
+        return
+    day = intra.index[-1].tz_convert("America/New_York").normalize().tz_localize(None)
+    if day != pd.Timestamp(last).tz_localize(None).normalize():
+        return
+    for t in missing:
+        if t not in intra["Close"]:
+            continue
+        c = intra["Close"][t].dropna()
+        if not len(c):
+            continue
+        raw.loc[last, ("Close", t)] = float(c.iloc[-1])
+        raw.loc[last, ("Open", t)] = float(intra["Open"][t].dropna().iloc[0])
+        raw.loc[last, ("High", t)] = float(intra["High"][t].max())
+        raw.loc[last, ("Low", t)] = float(intra["Low"][t].min())
 
 
 def download_afterhours(tickers: list[str]) -> pd.DataFrame:

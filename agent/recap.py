@@ -23,6 +23,10 @@ SECTOR_ETF = {"Technology": ("XLK", "科技"), "Communication Services": ("XLC",
               "Consumer Defensive": ("XLP", "必选消费"), "Utilities": ("XLU", "公用事业"),
               "Basic Materials": ("XLB", "材料"), "Real Estate": ("XLRE", "地产")}
 EXTRA_ETF = {"SMH": "半导体"}
+# Heavily traded US-listed stocks outside the S&P 500 (new IPOs, ADRs, ...); ~US$1B+ average daily dollar volume.
+HOT_EXTRA = {"SPCX": "SpaceX", "TSM": "台积电", "ASML": "阿斯麦", "MSTR": "Strategy（比特币）", "ARM": "Arm",
+             "SNOW": "Snowflake", "RKLB": "Rocket Lab", "SHOP": "Shopify", "BABA": "阿里巴巴", "NU": "Nu Holdings",
+             "CRCL": "Circle"}
 SECTORS_FILE = Path(__file__).with_name("sectors.json")
 
 
@@ -160,7 +164,8 @@ def _short(name: str, n: int = 22) -> str:
 def build_close(today: pd.Timestamp, members: list[str]) -> str:
     meta = load_meta()
     etfs = list(INDEX) + list(MACRO) + [v[0] for v in SECTOR_ETF.values()] + list(EXTRA_ETF)
-    daily = download_daily(etfs + members)
+    extras = [t for t in HOT_EXTRA if t not in members]
+    daily = download_daily(etfs + members + extras)
     day = daily["SPY"].index[-1]
     if day != today:
         return f"# {today:%Y-%m-%d} 美股休市\n\n最新交易日为 {day:%Y-%m-%d}，今天没有收盘报告。\n"
@@ -226,12 +231,24 @@ def build_close(today: pd.Timestamp, members: list[str]) -> str:
         if sub.empty:
             L.append(f"- {title}：无")
             continue
+        L.append("")
         L.append(f"**{title}**")
         L.append("| 股票 | 公司 | 板块 | 今日 | 5日 | 成交量/20日均量 |")
         L.append("|---|---|---|---|---|---|")
         for r in sub.itertuples():
             cn = SECTOR_ETF.get(r.sector, ("", r.sector))[1]
             L.append(f"| {r.ticker} | {_short(r.name)} | {cn} | {_pct(r.ret1)} | {_pct(r.ret5)} | {r.vol_ratio:.1f}x |")
+    hot = [(t, daily[t]) for t in extras if t in daily and daily[t].index[-1] == day]
+    if hot:
+        hot.sort(key=lambda x: -_chg(x[1], 1))
+        L.append("")
+        L.append("**热门非标普股票**（不在标普500里、但成交额很大，⚡ 表示 |涨跌| ≥ 4%）")
+        L.append("| 股票 | 公司 | 收盘 | 今日 | 5日 |")
+        L.append("|---|---|---|---|---|")
+        for t, d in hot:
+            r1 = _chg(d, 1)
+            L.append(f"| {t}{' ⚡' if abs(r1) >= 0.04 else ''} | {HOT_EXTRA[t]} | {d.close.iloc[-1]:,.2f} "
+                     f"| {_pct(r1)} | {_pct(_chg(d, 5))} |")
     L.append("")
 
     # strategy watch
@@ -278,6 +295,12 @@ def build_afterhours(today: pd.Timestamp, members: list[str]) -> str:
         return f"# {today:%Y-%m-%d} 美股休市\n\n今天没有盘后报告。\n"
     st = stock_table(daily, members, day, meta)
     top = st.nsmallest(300, "dv_rank").ticker.tolist()
+    extras = [t for t in HOT_EXTRA if t not in members]
+    extra_daily = download_daily(extras, period="1mo")
+    daily.update({t: d for t, d in extra_daily.items() if d.index[-1] == day})
+    top += [t for t in extras if t in daily]
+    for t in extras:
+        meta.setdefault(t, {"name": HOT_EXTRA[t], "sector": ""})
     ah = download_afterhours(etfs + top)
     close = {t: float(daily[t].close.iloc[-1]) for t in etfs + top if t in daily}
     ah["close"] = pd.Series(close)
@@ -310,7 +333,7 @@ def build_afterhours(today: pd.Timestamp, members: list[str]) -> str:
     L.append("、".join(f"{cn} {_pct(c)}" for cn, etf, c in sec) if sec else "板块 ETF 盘后几乎没有成交。")
     L.append("")
 
-    L.append("## 三、盘后异动个股（成交额前 300，|盘后涨跌| ≥ 2%）")
+    L.append("## 三、盘后异动个股（成交额前 300 + 热门非标普，|盘后涨跌| ≥ 2%）")
     movers = ah.loc[[t for t in top if t in ah.index]]
     movers = movers[movers.ah_chg.abs() >= 0.02].sort_values("ah_chg", key=lambda s: -s.abs()).head(15)
     if movers.empty:

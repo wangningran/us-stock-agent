@@ -19,7 +19,7 @@ which is executed by hand at a broker, and it keeps a model account that tracks 
 | Exit | Close > 5-day SMA (sell at the close), **8% GTC stop**, or a **10-trading-day** time stop |
 | Earnings | Buys and holdings with earnings within 10 trading days are flagged (reminder only) |
 
-Model account: 7,500 CAD ≈ US$5,260, flat as of 2026-10-05 (`state/account.json`).
+Model account: 7,500 CAD ≈ US$5,260, started 2026-10-05 (`state/account.json`, kept locally).
 
 ### Backtest of the live configuration
 
@@ -41,7 +41,9 @@ sell-offs and bear markets (e.g. 2022: +3% vs SPY −18%) and lags SPY in strong
 2. The user places market-on-close orders before 12:50 PT and an 8% GTC stop after each buy.
 3. The user reports actual fills; they are recorded with `scripts/record_trade.py`. Unreported trades are assumed
    filled at the close (shown as ⏳ unconfirmed); reported ones are ✅ confirmed and never overwritten.
-4. State (`state/`) and report archives (`reports/live/`) are committed to the repo after each run.
+4. State (`state/`) and daily trade reports (`reports/live/`) stay on the machine that runs the report and are
+   not committed (they contain the user's own fills). Run `python scripts/live_report.py --init` to start a fresh
+   model account, then `scripts/record_trade.py` to re-enter open positions.
 
 Signal reference: [`docs/signals.md`](docs/signals.md).
 
@@ -145,7 +147,7 @@ All tests use the point-in-time S&P 500, train 2019–2024 and test 2025-01 onwa
 | `agent/data.py`, `agent/universe.py` | yfinance data with CSV cache; point-in-time S&P 500 membership |
 | `agent/signals.py`, `strategy.py`, `backtest.py`, `report.py`, `metrics.py` | Legacy v1 analyst + momentum strategy |
 | `scripts/` | Live report, trade recording, research and backtest entry points |
-| `state/` | Model account (`account.json`, `positions.csv`, `trades.csv`) |
-| `reports/live/` | Archive of daily reports |
+| `state/` | Model account (`account.json`, `positions.csv`, `trades.csv`); local only, git-ignored |
+| `reports/live/` | Daily trade reports; local only, git-ignored |
 | `tests/` | Unit tests (fills, look-ahead, membership, live flow, ledger) |
 | `config.yaml` | Data settings and legacy v1 parameters |

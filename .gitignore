@@ -13,3 +13,7 @@ data/ref/
 data/missing.json
 research/nautilus/out/bars_signals.csv
 research/nautilus/out/days.csv
+
+# Personal account state and daily trade reports stay local (not published)
+state/
+reports/live/

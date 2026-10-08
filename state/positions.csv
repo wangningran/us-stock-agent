@@ -1,4 +1,4 @@
 ticker,entry_date,entry,shares,stop,provisional,confirmed
-LRCX,2026-10-08,317.69,3,292.27,True,False
-IBIT,2026-10-08,46.1,22,42.42,True,False
-AMAT,2026-10-08,505.08,2,464.68,True,False
+LRCX,2026-10-08,317.69,1,292.27,True,False
+IBIT,2026-10-08,46.1,20,42.42,True,False
+AMAT,2026-10-08,505.08,1,464.68,True,False

@@ -1,6 +1,6 @@
 {
   "strategy_capital": 5260.0,
-  "cash": 5260.0,
+  "cash": 2282.450019836426,
   "max_positions": 5,
   "stop_pct": 0.08,
   "time_stop": 10,
@@ -14,7 +14,7 @@
     "cost": 0.0,
     "fills": []
   },
-  "last_run": "2026-10-07",
+  "last_run": "2026-10-08",
   "max_new_per_day": 3,
   "top_n": 150,
   "extras": [

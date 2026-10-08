@@ -125,6 +125,12 @@ All tests use the point-in-time S&P 500, train 2019–2024 and test 2025-01 onwa
    exit reason; the only differences are 16 gap-down stops, which we fill at the open and Nautilus fills at the
    stop price (see `research/nautilus/RESULTS.md`). Both engines still assume a fill at the signal-day close.
 
+8. **Exit rules (2026-10).** `scripts/research_exits.py` keeps the live entry and tests 14 exits (longer moving
+   averages, RSI(2) > 70/90, prior-high, "ride until back below SMA5", +3/5/8% targets, minimum holds, longer time
+   stops). Exits that hold longer raise the average winner (+4-8%) but cut the win rate to 42-60%, and none beat the
+   live SMA5 exit in both periods on return and drawdown; fixed targets lost money in 2025-26. The strategy holds
+   positions only ~20% of the time, so idle cash, not the exit, is the main drag on returns.
+
 ## Limitations
 
 - Yahoo has no prices for delisted / renamed tickers; ~85% of the 694 S&P 500 members since 2018 have data. The

@@ -87,8 +87,13 @@ def build_mr(prices: dict[str, pd.DataFrame], rule: str, members: pd.DataFrame |
 def run_mr_backtest(feats: dict[str, pd.DataFrame], bench: pd.DataFrame, *, mode: str = "close",
                     max_positions: int = 10, time_stop: int = 10, stop_pct: float | None = None,
                     slippage_bps: float = 5, commission: float = 1.0, equity0: float = 100_000,
-                    market_filter: bool = False, start=None, end=None, max_new_per_day: int | None = None):
-    """Signal backtest with equal weights: each position = equity / max_positions."""
+                    market_filter: bool = False, start=None, end=None, max_new_per_day: int | None = None,
+                    target_pct: float | None = None, min_hold: int = 0):
+    """Signal backtest with equal weights: each position = equity / max_positions.
+
+    target_pct: also sell at the close once the close is >= entry * (1 + target_pct).
+    min_hold:   ignore the exit signal until the position has been held this many days (stops still apply).
+    """
     days = bench.index
     if start:
         days = days[days >= pd.Timestamp(start)]
@@ -150,8 +155,10 @@ def run_mr_backtest(feats: dict[str, pd.DataFrame], bench: pd.DataFrame, *, mode
             if p["d"] == day or pd.isna(c[t]):
                 continue
             p["n"] += 1
-            if EXIT.at[day, t] or p["n"] >= time_stop:
-                why = "signal" if EXIT.at[day, t] else "time"
+            sig = bool(EXIT.at[day, t]) and p["n"] >= min_hold
+            tgt = target_pct is not None and c[t] >= p["px"] * (1 + target_pct)
+            if sig or tgt or p["n"] >= time_stop:
+                why = "signal" if sig else "target" if tgt else "time"
                 if mode == "close":
                     sell(t, c[t], day, why)
                 else:

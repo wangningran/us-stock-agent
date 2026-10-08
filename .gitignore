@@ -11,3 +11,5 @@ reports/*.csv
 .env
 data/ref/
 data/missing.json
+research/nautilus/out/bars_signals.csv
+research/nautilus/out/days.csv

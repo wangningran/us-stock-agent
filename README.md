@@ -116,6 +116,13 @@ All tests use the point-in-time S&P 500, train 2019–2024 and test 2025-01 onwa
    Plain 20-day breakouts without the setup lost money in 2019-24 and only worked in 2025-26. Daily returns are
    almost uncorrelated with RSI(2) (0.14); a 50/50 mix had a lower drawdown than either alone, but both trail SPY.
 
+7. **Look-ahead and engine audit.** `tests/test_lookahead.py` and `scripts/audit_lookahead.py` scramble all data
+   after a cutoff and require identical signals, equity and trades up to it (five injected look-ahead bugs were
+   all caught; the real code passes at four stress-day cutoffs). `research/nautilus/` re-runs the live RSI(2)
+   rules on Nautilus Trader's event-driven engine: all 640 trades match ours on ticker, dates, entry price and
+   exit reason; the only differences are 16 gap-down stops, which we fill at the open and Nautilus fills at the
+   stop price (see `research/nautilus/RESULTS.md`). Both engines still assume a fill at the signal-day close.
+
 ## Limitations
 
 - Yahoo has no prices for delisted / renamed tickers; ~85% of the 694 S&P 500 members since 2018 have data. The

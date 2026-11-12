@@ -28,6 +28,8 @@ EXTRA_ETF = {"SMH": "半导体"}
 HOT_EXTRA = {"SPCX": "SpaceX", "TSM": "台积电", "ASML": "阿斯麦", "MSTR": "Strategy（比特币）", "ARM": "Arm",
              "SNOW": "Snowflake", "RKLB": "Rocket Lab", "SHOP": "Shopify", "BABA": "阿里巴巴", "NU": "Nu Holdings",
              "CRCL": "Circle"}
+# User-requested tracking list shown in the close report (tracking only, no signals or orders).
+WATCHLIST = {"NVDA": "英伟达"}
 SECTORS_FILE = Path(__file__).with_name("sectors.json")
 
 
@@ -166,7 +168,8 @@ def build_close(today: pd.Timestamp, members: list[str]) -> str:
     meta = load_meta()
     etfs = list(INDEX) + list(MACRO) + [v[0] for v in SECTOR_ETF.values()] + list(EXTRA_ETF)
     extras = [t for t in HOT_EXTRA if t not in members]
-    daily = download_daily(etfs + members + extras)
+    watch = [t for t in WATCHLIST if t not in members and t not in extras]
+    daily = download_daily(etfs + members + extras + watch)
     day = daily["SPY"].index[-1]
     if day != today:
         return f"# {today:%Y-%m-%d} 美股休市\n\n最新交易日为 {day:%Y-%m-%d}，今天没有收盘报告。\n"
@@ -276,6 +279,7 @@ def build_close(today: pd.Timestamp, members: list[str]) -> str:
     L.append("")
 
     L += _breakout_section(daily, st, extras, day, meta)
+    L += _watchlist_section(daily, day)
 
     # earnings next trading day
     top = st.nsmallest(200, "dv_rank").ticker.tolist()
@@ -287,6 +291,34 @@ def build_close(today: pd.Timestamp, members: list[str]) -> str:
     L.append("")
     L.append("> 数据来自 Yahoo Finance 收盘数据，仅供研究参考，不构成投资建议。")
     return "\n".join(L)
+
+
+def _watchlist_section(daily, day) -> list[str]:
+    """User tracking list: trend and momentum snapshot plus next earnings date (no trading signal)."""
+    rows = [(t, n, daily[t]) for t, n in WATCHLIST.items() if t in daily and daily[t].index[-1] == day]
+    if not rows:
+        return []
+    ed = earnings_dates([t for t, _, _ in rows])
+    L = ["## 关注股票（跟踪用，不是买卖信号）",
+         "| 股票 | 收盘 | 今日 | 5日 | 20日 | 距52周高点 | 20日线 | 50日线 | 200日线 | RSI(14) | 下次财报 |",
+         "|---|---|---|---|---|---|---|---|---|---|---|"]
+    for t, n, d in rows:
+        c = d.close
+        px = c.iloc[-1]
+
+        def ma(k):
+            m = c.rolling(k).mean().iloc[-1]
+            return f"{m:,.2f} {'↑' if px > m else '↓'}" if not np.isnan(m) else "—"
+        hi = d.high.tail(252).max()
+        nxt = [x for x in ed.get(t, []) if x.normalize() >= day]
+        L.append(f"| {t} {n} | {px:,.2f} | {_pct(_chg(d, 1))} | {_pct(_chg(d, 5))} | {_pct(_chg(d, 20))} "
+                 f"| {_pct(px / hi - 1)} | {ma(20)} | {ma(50)} | {ma(200)} | {wilder_rsi(c, 14).iloc[-1]:.0f} "
+                 f"| {min(nxt):%m-%d} |" if nxt else
+                 f"| {t} {n} | {px:,.2f} | {_pct(_chg(d, 1))} | {_pct(_chg(d, 5))} | {_pct(_chg(d, 20))} "
+                 f"| {_pct(px / hi - 1)} | {ma(20)} | {ma(50)} | {ma(200)} | {wilder_rsi(c, 14).iloc[-1]:.0f} | — |")
+    L.append("- ↑ / ↓：收盘价在该均线上方 / 下方。")
+    L.append("")
+    return L
 
 
 def _breakout_section(daily, st, extras, day, meta) -> list[str]:
